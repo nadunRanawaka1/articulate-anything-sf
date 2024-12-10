@@ -2,3 +2,4 @@
 /examples/articulate_image.ipynb filter=lfs diff=lfs merge=lfs -text
 /examples/articulate_video.ipynb filter=lfs diff=lfs merge=lfs -text
 /examples/preprocess_text.ipynb filter=lfs diff=lfs merge=lfs -text
+/partnet_mobility_embeddings.csv filter=lfs diff=lfs merge=lfs -text
