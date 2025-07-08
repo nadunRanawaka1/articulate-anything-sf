@@ -91,7 +91,7 @@ def flatten_dict(d: Dict[str, Any], parent_key: str = '', sep: str = '.') -> Dic
     return dict(items)
 
 
-def config_to_command(cfg: DictConfig, script_path: str, conda_env: str = "articulate-anything-clean") -> List[str]:
+def config_to_command(cfg: DictConfig, script_path: str, conda_env: str = "articulate-anything") -> List[str]:
     """
     Convert a configuration to a command-line command, flattening nested structures.
 
@@ -111,7 +111,7 @@ def config_to_command(cfg: DictConfig, script_path: str, conda_env: str = "artic
     return make_cmd(script_path, conda_env, cmd_args)
 
 
-def make_cmd(script_path: str, conda_env: str = "articulate-anything-clean",
+def make_cmd(script_path: str, conda_env: str = "articulate-anything",
              cmd_args=[]):
     # Construct the command
     command = [
