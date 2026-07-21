@@ -57,6 +57,23 @@
 
 ______________________________________________________________________
 
+> [!NOTE]
+> ### SimFoundry fork
+> This is the [SimFoundry](https://github.com/NVlabs/simfoundry) fork of Articulate-Anything. It adds a
+> **SimFoundry integration** (under [`simfoundry/`](simfoundry/)) that runs articulation as a stage of the SimFoundry real2sim
+> pipeline on in-the-wild reconstructed meshes, on top of the original PartNet-Mobility workflow.
+>
+> What differs from upstream:
+> - **VLM backend:** all VLM calls run on **Google Vertex AI Gemini** — set `GCLOUD_PROJECT` (see
+>   [`conf/config_simfoundry.yaml`](conf/config_simfoundry.yaml)). No proprietary/hosted inference services are required.
+> - **Mesh part-segmentation** has three interchangeable backends selected by `segment_method`:
+>   [`samesh`](https://github.com/gtangg12/samesh), [`Hunyuan3D-Part`](https://github.com/Tencent-Hunyuan/Hunyuan3D-Part),
+>   and [`PartField`](https://github.com/nv-tlabs/PartField).
+> - **Install** uses the per-backend scripts described in [Installation](#installation) (separate conda envs).
+>
+> The upstream documentation below is preserved and still applies to the standalone
+> text / image / video articulation workflow.
+
 Articulate Anything is a powerful VLM system for articulating 3D objects using various input modalities.
 
 
@@ -119,20 +136,45 @@ See below for more detailed guides.
 > Skip the downloading raw dataset step if you have already downloaded our dataset from 🤗 [Articulate-Anything Dataset on Hugging Face](https://huggingface.co/datasets/vlongle/articulate-anything-dataset-preprocessed/tree/main).
 
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/vlongle/articulate-anything.git
-   cd articulate-anything
-   ```
+### SimFoundry integration install
 
-2. Set up the Python environment:
+The SimFoundry integration builds a separate conda env per mesh-segmentation backend. From the repo root:
+
+```bash
+bash installation_hunyuan.sh     # env: articulate-anything-hunyuan  (py3.10) — Hunyuan3D-Part  [DEFAULT]
+bash installation_samesh.sh      # env: articulate-anything-samesh   (py3.11) — SAMesh + SAM2 + CoTracker  (optional)
+bash installation_partfield.sh   # env: articulate-anything-partfield(py3.10) — PartField  (optional)
+```
+
+**Hunyuan3D-Part is the default segmentation backend**; SAMesh and PartField are optional and only run
+when explicitly selected via `segment_method` (`hunyuan` / `samesh` / `partfield`). Install just the
+backend(s) you need.
+
+> [!NOTE]
+> **The segmentation backends are fetched from their public upstreams, then patched.** Each
+> `installation_*.sh` clones the public upstream at a pinned commit and applies a patch from
+> [`patches/`](patches/) (see [`patches/README.md`](patches/README.md)).
+> Model weights and large demo assets are fetched separately, not shipped in the patches.
+
+Set your Vertex AI project (read by [`conf/config_simfoundry.yaml`](conf/config_simfoundry.yaml)) and authenticate:
+
+```bash
+export GCLOUD_PROJECT=<your-gcp-project>
+gcloud auth application-default login
+```
+
+### Upstream (standalone) install
+> [!NOTE] We have kept these instructions, but you do not need to run them for SimFoundry workflows.
+For the standalone text / image / video articulation workflow:
+
+1. Set up the Python environment:
    ```bash
    conda create -n articulate-anything python=3.9
    conda activate articulate-anything
    pip install -e .
    ```
 
-3. Download and extract the PartNet-Mobility dataset:
+2. Download and extract the PartNet-Mobility dataset:
    ```bash
    # Download from https://sapien.ucsd.edu/downloads
    mkdir datasets
@@ -144,11 +186,19 @@ See below for more detailed guides.
 
 ## Getting Started
 
-Our system supports Google Gemini, OpenAI GPT, and Anthropic Claude. You can set the `model_name` in the config file [conf/config.yaml](conf/config.yaml) to `gemini-1.5-flash-latest`, `gpt-4o`, or `claude-3-5-sonnet-20241022`. Get your API key from the respective website and set it as an environment variable:
+Our system supports Google Gemini, OpenAI GPT, and Anthropic Claude. Set `model_name` in the config file
+([conf/config.yaml](conf/config.yaml) for the standalone workflow, [conf/config_simfoundry.yaml](conf/config_simfoundry.yaml)
+for the SimFoundry integration) to a supported model such as `gemini-2.5-pro`, `gpt-4o`, or a Claude model.
+
+VLM calls run on **Google Vertex AI Gemini** — set your project and authenticate with Application Default
+Credentials:
 
    ```bash
-   export API_KEY=YOUR_API_KEY
+   export GCLOUD_PROJECT=<your-gcp-project>
+   gcloud auth application-default login
    ```
+
+For OpenAI/Anthropic models, set the corresponding provider key (e.g. `OPENAI_API_KEY`) instead.
 
 ## Usage
 

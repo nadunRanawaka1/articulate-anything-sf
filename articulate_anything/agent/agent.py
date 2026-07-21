@@ -14,28 +14,39 @@ from omegaconf import OmegaConf
 import os
 import logging
 from IPython.display import display, HTML
+from google.genai import types
 
 GEN_CONFIG = {
     "temperature": 0.5,
 }
 
+GEN_CONFIG_SIMFOUNDRY = types.GenerateContentConfig(
+    temperature=0.5,
+    candidate_count=3,
+    thinkingConfig=types.ThinkingConfig(
+        include_thoughts=True,
+        thinking_level="high"
+    )
+)
 
 @dataclass
 class AgentConfig:
     out_dir: str
     api_key: Optional[str] = None
-
+    n_retries: int = 3
 
 class Agent:
     def __init__(
         self, cfg: AgentConfig,
     ):
         self.cfg = cfg
+        self.n_retries = cfg.n_retries
         create_dir(cfg.out_dir)
         self.system_instruction = self.make_system_instruction()
         self.model = setup_vlm_model(
-            model_name=cfg.model_name, system_instruction=self.system_instruction, api_key=cfg.api_key
-        )
+            model_name=cfg.model_name, system_instruction=self.system_instruction, api_key=cfg.api_key, cfg=cfg
+        ) # could be model or client
+        self.genai_model = "gemini" in cfg.model_name
         OmegaConf.save(self.cfg, join_path(cfg.out_dir, "config.json"))
 
     @ property
@@ -88,20 +99,63 @@ class Agent:
             return
 
         if gen_config is None:
-            gen_config = GEN_CONFIG
+            if self.genai_model:
+                gen_config = types.GenerateContentConfig(
+                                    temperature=0.5,
+                                    # candidate_count=3,
+                                    system_instruction=self.system_instruction,
+                                    # thinkingConfig=types.ThinkingConfig(
+                                    #     include_thoughts=True,
+                                    #     thinking_level="high"
+                                    # )
+                                )
+            else:
+                gen_config = GEN_CONFIG
 
         logging.info(f"{self.__class__.__name__}: Generating content.")
         prompt_parts = self.make_prompt_parts(*args, **kwargs)
         logging.info(f"Prompt: {prompt_parts}")
 
-        response = self.model.generate_content(
-            prompt_parts,
-            generation_config=gen_config,
-        )
+
+
+        if self.genai_model:
+            logging.info(f"Generating content with model: {self.cfg.model_name}")
+            #TODO: This is a hack to handle the different types of prompt parts for the different joint critics.
+            if self.__class__.__name__ == "JointCriticSimfoundryVideo":
+                response = self.model.models.generate_content(
+                    model=self.cfg.model_name,
+                    contents=types.Content(parts=prompt_parts),     
+                    config=gen_config,
+                )
+            else:
+                response = self.model.models.generate_content(
+                    model=self.cfg.model_name,
+                    contents=prompt_parts,     
+                    config=gen_config,
+                )
+        else:
+            logging.info(f"Generating content with model: {self.cfg.model_name}")
+            response = self.model.generate_content(
+                prompt_parts,
+                generation_config=gen_config,
+            )
+     
         # logging.info(f"Usage: {response.usage_metadata}")
 
-        self.parse_response(response, **kwargs)
-        return response
+        for i in range(self.n_retries):
+            try:
+                self.parse_response(response, **kwargs)
+                break
+            except Exception as e:
+                logging.error(f"Error parsing response: {e}")
+                response = self.model.generate_content(
+                    prompt_parts, generation_config=gen_config)
+        else:
+            logging.error(f"Failed to parse response after {self.n_retries} retries")
+            raise Exception(f"Failed to parse response after {self.n_retries} retries")
+
+        # self.parse_response(response, **kwargs)
+        # return response
 
     def load_prediction(self):
         if ".json" in self.OUT_RESULT_PATH:

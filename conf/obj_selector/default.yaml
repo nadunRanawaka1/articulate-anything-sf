@@ -1,3 +1,4 @@
 name: hierarchical # (yolo, hierarchical)
 max_images: 10
 frame_index: 0
+n_retries: 3

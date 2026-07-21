@@ -1,0 +1,3382 @@
+diff --git a/P3-SAM/.gitignore b/P3-SAM/.gitignore
+index dd471ef..bc0eac8 100755
+--- a/P3-SAM/.gitignore
++++ b/P3-SAM/.gitignore
+@@ -2,6 +2,10 @@
+ __pycache__/
+ *.py[codz]
+ *$py.class
++*.pth
++*.safetensors
++*.ckpt
++*.pt
+ 
+ # C extensions
+ *.so
+diff --git a/P3-SAM/INSTALL.md b/P3-SAM/INSTALL.md
+new file mode 100644
+index 0000000..574a795
+--- /dev/null
++++ b/P3-SAM/INSTALL.md
+@@ -0,0 +1,104 @@
++# P3-SAM Installation Guide
++
++## Quick Install
++
++### Option 1: Development Install (Recommended for local usage)
++
++Install all dependencies
++```bash
++mamba create -n 3D_part python=3.10
++mamba activate 3D_part
++pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126
++pip install spconv-cu126
++pip install torch-scatter -f https://data.pyg.org/whl/torch-2.6.0+cu126.html
++pip install packaging
++pip install ninja
++pip install flash-attn --no-build-isolation
++pip install huggingface_hub timm omegaconf
++pip install viser fpsample trimesh numba gradio
++cd utils/chamfer3D
++python setup.py install
++```
++
++Install in editable mode so you can use the package from anywhere while still being able to edit the source:
++
++```bash
++cd /path/to/Projects/Hunyuan3D-Part/P3-SAM
++pip install -e .
++```
++
++Then, for XPART
++
++```bash
++cd /path/to/Projects/Hunyuan3D-Part/XPart
++pip install -r requirements.txt
++pip install scikit-image diffusers
++pip install lightning
++pip install torch-cluster -f https://data.pyg.org/whl/torch-2.6.0+cu126.html
++```
++
++### Option 2: Regular Install
++
++```bash
++cd /path/to/Projects/Hunyuan3D-Part/P3-SAM
++pip install .
++```
++
++### Option 3: Install with Optional Dependencies
++
++```bash
++# Install with demo dependencies (viser, gradio)
++pip install -e ".[demo]"
++
++# Install with development dependencies
++pip install -e ".[dev]"
++
++# Install everything
++pip install -e ".[demo,dev]"
++```
++
++## Usage After Installation
++
++### 1. Command Line Usage
++
++After installation, you can use P3-SAM from anywhere:
++
++```bash
++# Run auto-mask from any directory
++p3sam-auto-mask \
++    --ckpt_path /path/to/weights/p3sam.safetensors \
++    --mesh_path /path/to/mesh.glb \
++    --output_path /path/to/output \
++    --point_num 100000 \
++    --prompt_num 400
++```
++
++### 2. Python API Usage
++
++```python
++# Import from anywhere
++from demo.auto_mask import AutoMask
++import trimesh
++
++# Load model
++auto_mask = AutoMask(ckpt_path="/path/to/weights/p3sam.safetensors")
++
++# Load mesh
++mesh = trimesh.load("mesh.glb", force='mesh')
++
++# Run segmentation
++aabb, face_ids, mesh = auto_mask.predict_aabb(
++    mesh,
++    save_path="output/",
++    point_num=100000,
++    prompt_num=400,
++    threshold=0.95,
++    post_process=True,
++    save_mid_res=True,
++    show_info=True,
++)
++
++print(f"Found {len(aabb)} parts")
++```
++
++
+diff --git a/P3-SAM/MANIFEST.in b/P3-SAM/MANIFEST.in
+new file mode 100644
+index 0000000..7ef7246
+--- /dev/null
++++ b/P3-SAM/MANIFEST.in
+@@ -0,0 +1,33 @@
++# Include documentation files
++include README.md
++include INSTALL.md
++include LICENSE
++include NOTICE
++
++# Include configuration files
++include pyproject.toml
++include setup.py
++
++# Include model weights directory structure (but not actual large files)
++recursive-include weights *.md
++
++# Include demo assets (small files only)
++recursive-include demo/assets *.md
++
++# Include images
++recursive-include images *.jpg *.png *.gif
++
++# Exclude unnecessary files
++global-exclude __pycache__
++global-exclude *.py[co]
++global-exclude .git*
++global-exclude .DS_Store
++global-exclude *.egg-info
++
++# Exclude results and large files
++prune demo/results
++prune weights/*.safetensors
++prune weights/*.ckpt
++prune weights/*.pt
++prune weights/*.pth
++
+diff --git a/P3-SAM/__init__.py b/P3-SAM/__init__.py
+new file mode 100644
+index 0000000..bd1ed55
+--- /dev/null
++++ b/P3-SAM/__init__.py
+@@ -0,0 +1,15 @@
++"""
++P3-SAM: Native 3D Part Segmentation
++
++A point-promptable part segmentation model for 3D objects.
++
++Usage:
++    from p3sam.demo import AutoMask
++    from p3sam.model import build_P3SAM, load_state_dict
++"""
++
++__version__ = "1.0.0"
++__author__ = "Changfeng Ma, Yang Li, Xinhao Yan, et al."
++
++__all__ = []  # Use explicit imports from submodules
++
+diff --git a/P3-SAM/demo/__init__.py b/P3-SAM/demo/__init__.py
+new file mode 100644
+index 0000000..1f7a331
+--- /dev/null
++++ b/P3-SAM/demo/__init__.py
+@@ -0,0 +1,14 @@
++"""
++P3-SAM Demo Module
++
++Contains demo scripts and utilities for P3-SAM.
++"""
++
++from .auto_mask import AutoMask, mesh_sam, P3SAM
++
++__all__ = [
++    "AutoMask",
++    "mesh_sam",
++    "P3SAM",
++]
++
+diff --git a/P3-SAM/demo/app.py b/P3-SAM/demo/app.py
+index ac1e42b..3fb25b3 100755
+--- a/P3-SAM/demo/app.py
++++ b/P3-SAM/demo/app.py
+@@ -9,8 +9,14 @@ import trimesh
+ from sklearn.decomposition import PCA
+ import time
+ 
+-sys.path.append('..')
+-from model import build_P3SAM, load_state_dict
++# Use proper package-relative imports
++try:
++    # When installed as package - import from parent package
++    from ..model import build_P3SAM, load_state_dict
++except (ImportError, ValueError):
++    # Fallback for direct script execution from demo directory
++    sys.path.append('..')
++    from model import build_P3SAM, load_state_dict
+ 
+ class P3SAM(nn.Module):
+     def __init__(self):
+@@ -83,13 +89,13 @@ def get_mask(model, feats, points, point_prompt):
+     prompt_coord = prompt_coord.repeat(point_num, 1) # [N, 3]
+     feats_seg = torch.cat([feats, points, prompt_coord], dim=-1) # [N, 512+3+3]
+ 
+-    # 预测mask stage-1
++    # Predictmask stage-1
+     pred_mask_1 = model.seg_mlp_1(feats_seg).squeeze(-1) # [N]
+     pred_mask_2 = model.seg_mlp_2(feats_seg).squeeze(-1) # [N]
+     pred_mask_3 = model.seg_mlp_3(feats_seg).squeeze(-1) # [N]
+     pred_mask = torch.stack([pred_mask_1, pred_mask_2, pred_mask_3], dim=-1) # [N, 3]
+ 
+-    # 预测mask stage-2
++    # Predictmask stage-2
+     feats_seg_2 = torch.cat([feats_seg, pred_mask], dim=-1) # [N, 512+3+3+3]
+     feats_seg_global = model.seg_s2_mlp_g(feats_seg_2) # [N, 512]
+     feats_seg_global = torch.max(feats_seg_global, dim=0).values # [512]
+@@ -134,16 +140,16 @@ def mask2color(mask):
+ 
+ def main(args):
+     # load model
+-    print("加载模型")
++    print("Load model")
+     model = P3SAM()
+     model.load_state_dict(args.ckpt_path)
+     model.eval()
+     model.cuda()  
+-    print("模型加载完成")
++    print("Model loaded successfully")
+ 
+-    print("加载数据列表")
++    print("Load data list")
+     data_list = os.listdir(args.data_dir)
+-    print(f"共加载{len(data_list)}个数据")
++    print(f"Loaded {len(data_list)} data files")
+ 
+     server = viser.ViserServer(host=args.host, port=args.port)
+     server.scene.set_up_direction("+y")
+@@ -186,7 +192,7 @@ def main(args):
+     def load_pc(use_normal=True, noise_std=0):
+         clear_state()
+ 
+-        print("加载数据")
++        print("Load data")
+         if args.data_dir is not None:
+             glb_data_path = os.path.join(args.data_dir, cur_data_id[0])
+         else:
+@@ -206,10 +212,10 @@ def main(args):
+         show_color = np.array([POINT_COLOR])
+         _show_colors = np.tile(show_color, (_points.shape[0], 1))
+ 
+-        print("预处理特征")
++        print("Preprocessing features")
+         _feats = get_feat(model, _points, normals)
+ 
+-        print("PCA获取特征颜色")
++        print("Get feature colors using PCA")
+         feat_save = _feats.float().detach().cpu().numpy()
+         data_scaled = feat_save / np.linalg.norm(feat_save, axis=-1, keepdims=True)
+         pca = PCA(n_components=3)
+@@ -229,7 +235,7 @@ def main(args):
+         colors_pca[0] = _colors_pca
+         feats[0] = _feats
+         show_colors[0] = _show_colors
+-        print("加载数据完成")
++        print("Load datacomplete")
+ 
+     load_pc()
+ 
+@@ -355,7 +361,7 @@ def main(args):
+                 disth = disth[mask]
+                 min_disth_idx = np.argmin(disth)
+                 select_point = select_points[min_disth_idx]
+-                print(f"选择点: {select_point}")
++                print(f"Selected point: {select_point}")
+                 point_prompt[0] = select_point
+                 add_point_prompt()
+ 
+@@ -378,9 +384,9 @@ def main(args):
+                     mask_name = "Mask-3"
+                 drop_down_handle.value = mask_name
+ 
+-                print('获取mask成功', np.sum(mask_res[0]), np.sum(mask_res[1]), np.sum(mask_res[2]))
+-                print('获取iou成功', pred_iou_1, pred_iou_2, pred_iou_3)
+-                print('最佳mask', best[0]+1)
++                print('Got mask successfully', np.sum(mask_res[0]), np.sum(mask_res[1]), np.sum(mask_res[2]))
++                print('Got IOU successfully', pred_iou_1, pred_iou_2, pred_iou_3)
++                print('Best mask', best[0]+1)
+ 
+                 client.scene.remove_pointer_callback()
+ 
+diff --git a/P3-SAM/demo/auto_mask.py b/P3-SAM/demo/auto_mask.py
+index 45ff254..e9a087e 100755
+--- a/P3-SAM/demo/auto_mask.py
++++ b/P3-SAM/demo/auto_mask.py
+@@ -22,8 +22,14 @@ from collections import defaultdict
+ import numba 
+ from numba import njit
+ 
+-sys.path.append('..')
+-from model import build_P3SAM, load_state_dict
++# Use proper package-relative imports
++try:
++    # When installed as package - import from parent package
++    from ..model import build_P3SAM, load_state_dict
++except (ImportError, ValueError):
++    # Fallback for direct script execution from demo directory
++    sys.path.append('..')
++    from model import build_P3SAM, load_state_dict
+ 
+ class P3SAM(nn.Module):
+     def __init__(self):
+@@ -60,7 +66,7 @@ class P3SAM(nn.Module):
+         point_prompt = point_prompt.transpose(0, 1)  # [N, K, 3]
+         feats_seg = torch.cat([feats, points, point_prompt], dim=-1)  # [N, K, 512+3+3]
+ 
+-        # 预测mask stage-1
++        # Predict mask stage-1
+         pred_mask_1 = self.seg_mlp_1(feats_seg).squeeze(-1)  # [N, K]
+         pred_mask_2 = self.seg_mlp_2(feats_seg).squeeze(-1)  # [N, K]
+         pred_mask_3 = self.seg_mlp_3(feats_seg).squeeze(-1)  # [N, K]
+@@ -69,7 +75,7 @@ class P3SAM(nn.Module):
+         )  # [N, K, 3]
+ 
+         for _ in range(iter):
+-            # 预测mask stage-2
++            # Predict mask stage-2
+             feats_seg_2 = torch.cat([feats_seg, pred_mask], dim=-1)  # [N, K, 512+3+3+3]
+             feats_seg_global = self.seg_s2_mlp_g(feats_seg_2)  # [N, K, 512]
+             feats_seg_global = torch.max(feats_seg_global, dim=0).values  # [K, 512]
+@@ -191,16 +197,16 @@ def cal_single_iou(m1, m2):
+ 
+ def iou_3d(box1, box2, signle=None):
+     """
+-    计算两个三维边界框的交并比 (IoU)
++    Calculate the Intersection over Union (IoU) of two 3D bounding boxes
+ 
+-    参数:
+-        box1 (list): 第一个边界框的坐标 [x1_min, y1_min, z1_min, x1_max, y1_max, z1_max]
+-        box2 (list): 第二个边界框的坐标 [x2_min, y2_min, z2_min, x2_max, y2_max, z2_max]
++    Parameters:
++        box1 (list): Coordinates of the first bounding box [x1_min, y1_min, z1_min, x1_max, y1_max, z1_max]
++        box2 (list): Coordinates of the second bounding box [x2_min, y2_min, z2_min, x2_max, y2_max, z2_max]
+ 
+-    返回:
+-        float: 交并比 (IoU) 值
++    Returns:
++        float: IoU value
+     """
+-    # 计算交集的坐标
++    # Calculate intersection coordinates
+     intersection_xmin = max(box1[0], box2[0])
+     intersection_ymin = max(box1[1], box2[1])
+     intersection_zmin = max(box1[2], box2[2])
+@@ -208,27 +214,27 @@ def iou_3d(box1, box2, signle=None):
+     intersection_ymax = min(box1[4], box2[4])
+     intersection_zmax = min(box1[5], box2[5])
+ 
+-    # 判断是否有交集
++    # Check if there is an intersection
+     if (
+         intersection_xmin >= intersection_xmax
+         or intersection_ymin >= intersection_ymax
+         or intersection_zmin >= intersection_zmax
+     ):
+-        return 0.0  # 无交集
++        return 0.0  # No intersection
+ 
+-    # 计算交集的体积
++    # Calculate intersection volume
+     intersection_volume = (
+         (intersection_xmax - intersection_xmin)
+         * (intersection_ymax - intersection_ymin)
+         * (intersection_zmax - intersection_zmin)
+     )
+ 
+-    # 计算两个盒子的体积
++    # Calculate volume of both boxes
+     box1_volume = (box1[3] - box1[0]) * (box1[4] - box1[1]) * (box1[5] - box1[2])
+     box2_volume = (box2[3] - box2[0]) * (box2[4] - box2[1]) * (box2[5] - box2[2])
+ 
+     if signle is None:
+-        # 计算并集的体积
++        # Calculate union volume
+         union_volume = box1_volume + box2_volume - intersection_volume
+     elif signle == "1":
+         union_volume = box1_volume
+@@ -237,7 +243,7 @@ def iou_3d(box1, box2, signle=None):
+     else:
+         raise ValueError("signle must be None or 1 or 2")
+ 
+-    # 计算 IoU
++    # Calculate IoU
+     iou = intersection_volume / union_volume if union_volume > 0 else 0.0
+     return iou
+ 
+@@ -262,26 +268,26 @@ def clean_mesh(mesh):
+     """
+     mesh: trimesh.Trimesh
+     """
+-    # 1. 合并接近的顶点
++    # 1. Merge nearby vertices
+     mesh.merge_vertices()
+ 
+-    # 2. 删除重复的顶点
+-    # 3. 删除重复的面片
++    # 2. Remove duplicate vertices
++    # 3. Remove duplicate faces
+     mesh.process(True)
+     return mesh
+ 
+ 
+ def remove_outliers_iqr(data, factor=1.5):
+     """
+-    基于 IQR 去除离群值
+-    :param data: 输入的列表或 NumPy 数组
+-    :param factor: IQR 的倍数（默认 1.5）
+-    :return: 去除离群值后的列表
++    Remove outliers based on IQR
++    :param data: Input list or NumPy array
++    :param factor: IQR multiplier (default 1.5)
++    :return: List with outliers removed
+     """
+     data = np.array(data, dtype=np.float32)
+-    q1 = np.percentile(data, 25)  # 第一四分位数
+-    q3 = np.percentile(data, 75)  # 第三四分位数
+-    iqr = q3 - q1  # 四分位距
++    q1 = np.percentile(data, 25)  # First quartile
++    q3 = np.percentile(data, 75)  # Third quartile
++    iqr = q3 - q1  # Interquartile range
+     lower_bound = q1 - factor * iqr
+     upper_bound = q3 + factor * iqr
+     return data[(data >= lower_bound) & (data <= upper_bound)].tolist()
+@@ -316,7 +322,7 @@ def fix_label(face_ids, adjacent_faces, use_aabb=False, mesh=None, show_info=Fal
+             _part_mask = np.reshape(_part_mask, (-1, 3))
+             _part_mask = np.all(_part_mask, axis=1)
+             return i, [min_xyz, max_xyz], _part_mask
+-        with Timer("计算aabb"):
++        with Timer("Calculate aabb"):
+             aabb = {}
+             unique_ids = np.unique(face_ids)
+             # print(max(unique_ids))
+@@ -342,7 +348,7 @@ def fix_label(face_ids, adjacent_faces, use_aabb=False, mesh=None, show_info=Fal
+             # _points = _vertices[_faces]
+             # aabb_face_mask = cal_aabb_mask(_points, face_ids)
+ 
+-    with Timer("合并mesh"):
++    with Timer("Merge mesh"):
+         loop_cnt = 1
+         changed = True
+         progress = tqdm(disable=not show_info)
+@@ -350,11 +356,11 @@ def fix_label(face_ids, adjacent_faces, use_aabb=False, mesh=None, show_info=Fal
+         faces_max = adjacent_faces.shape[0]
+         while changed and loop_cnt <= 50:
+             changed = False
+-            # 获取无色面片
++            # Get uncolored faces
+             new_no_mask_ids = []
+             for i in no_mask_ids:
+                 # if face_ids[i] < 0:
+-                # 找邻居
++                # Find neighbors
+                 if not (0 <= i < faces_max):
+                     continue
+                 _adj_faces = adjacent_faces[i]
+@@ -379,7 +385,7 @@ def fix_label(face_ids, adjacent_faces, use_aabb=False, mesh=None, show_info=Fal
+             no_mask_ids = new_no_mask_ids
+             # print(loop_cnt)
+             progress.update(1)
+-            # progress.set_description(f"合并mesh循环：{loop_cnt} {np.sum(face_ids < 0)}")
++            # progress.set_description(f"Merge mesh loop: {loop_cnt} {np.sum(face_ids < 0)}")
+             loop_cnt += 1
+     return face_ids
+ 
+@@ -396,7 +402,7 @@ def save_mesh(save_path, mesh, face_ids, color_map):
+     mesh_save.visual.face_colors = face_colors
+     mesh_save.export(save_path)
+     mesh_save.export(save_path.replace(".glb", ".ply"))
+-    # print('保存mesh完成')
++    # print('Mesh save complete')
+ 
+     scene_mesh = trimesh.Scene()
+     scene_mesh.add_geometry(mesh_save)
+@@ -446,25 +452,25 @@ def get_aabb_from_face_ids(mesh, face_ids):
+ 
+ def calculate_face_areas(mesh):
+     """
+-    计算每个三角形面片的面积
+-    :param mesh: trimesh.Trimesh 对象
+-    :return: 面片面积数组 (n_faces,)
++    Calculate the area of each triangular face
++    :param mesh: trimesh.Trimesh object
++    :return: Face area array (n_faces,)
+     """
+     return mesh.area_faces
+-    # # 提取顶点和面片索引
++    # # Extract vertices and face indices
+     # vertices = mesh.vertices
+     # faces = mesh.faces
+ 
+-    # # 获取所有三个顶点的坐标
++    # # Get coordinates of all three vertices
+     # v0 = vertices[faces[:, 0]]
+     # v1 = vertices[faces[:, 1]]
+     # v2 = vertices[faces[:, 2]]
+ 
+-    # # 计算两个边向量
++    # # Calculate two edge vectors
+     # edge1 = v1 - v0
+     # edge2 = v2 - v0
+ 
+-    # # 计算叉积的模长（向量面积的两倍）
++    # # Calculate magnitude of cross product（twice the vector area）
+     # cross_product = np.cross(edge1, edge2)
+     # areas = 0.5 * np.linalg.norm(cross_product, axis=1)
+ 
+@@ -504,37 +510,37 @@ def get_connected_region(face_ids, adjacent_faces, return_face_part_ids=False):
+ 
+ def aabb_distance(box1, box2):
+     """
+-    计算两个轴对齐包围盒（AABB）之间的最近距离。
+-    :param box1: 元组 (min_x, min_y, min_z, max_x, max_y, max_z)
+-    :param box2: 元组 (min_x, min_y, min_z, max_x, max_y, max_z)
+-    :return: 最近距离（浮点数）
++    Calculate the nearest distance between two axis-aligned bounding boxes (AABB).
++    :param box1: Tuple (min_x, min_y, min_z, max_x, max_y, max_z)
++    :param box2: Tuple (min_x, min_y, min_z, max_x, max_y, max_z)
++    :return: Nearest distance（float）
+     """
+-    # 解包坐标
++    # Unpack coordinates
+     min1, max1 = box1
+     min2, max2 = box2
+ 
+-    # 计算各轴上的分离距离
+-    dx = max(0, max2[0] - min1[0], max1[0] - min2[0])  # x轴分离距离
+-    dy = max(0, max2[1] - min1[1], max1[1] - min2[1])  # y轴分离距离
+-    dz = max(0, max2[2] - min1[2], max1[2] - min2[2])  # z轴分离距离
++    # Calculate separation distance on each axis
++    dx = max(0, max2[0] - min1[0], max1[0] - min2[0])  # x-axis separation distance
++    dy = max(0, max2[1] - min1[1], max1[1] - min2[1])  # y-axis separation distance
++    dz = max(0, max2[2] - min1[2], max1[2] - min2[2])  # z-axis separation distance
+ 
+-    # 如果所有轴都重叠，则距离为0
++    # If all axes overlap, distance is0
+     if dx == 0 and dy == 0 and dz == 0:
+         return 0.0
+ 
+-    # 计算欧几里得距离
++    # Calculate Euclidean distance
+     return np.sqrt(dx**2 + dy**2 + dz**2)
+ 
+ def aabb_volume(aabb):
+     """
+-    计算轴对齐包围盒（AABB）的体积。
+-    :param aabb: 元组 (min_x, min_y, min_z, max_x, max_y, max_z)
+-    :return: 体积（浮点数）
++    Calculate the volume of an axis-alignedBounding box（AABB） volume.
++    :param aabb: Tuple (min_x, min_y, min_z, max_x, max_y, max_z)
++    :return: Volume（float）
+     """
+-    # 解包坐标
++    # Unpack coordinates
+     min_xyz, max_xyz = aabb
+ 
+-    # 计算体积
++    # Calculate Volume
+     dx = max_xyz[0] - min_xyz[0]
+     dy = max_xyz[1] - min_xyz[1]
+     dz = max_xyz[2] - min_xyz[2]
+@@ -585,7 +591,7 @@ def find_neighbor_part(parts, adjacent_faces, parts_aabb=None, parts_ids=None):
+ 
+ 
+ def do_post_process(face_areas, parts, adjacent_faces, face_ids, threshold=0.95, show_info=False):
+-    # # 获取邻接面片
++    # # Get adjacent faces
+     # mesh_save = mesh.copy()
+     # face_adjacency = mesh.face_adjacency
+     # adjacent_faces = {}
+@@ -602,13 +608,13 @@ def do_post_process(face_areas, parts, adjacent_faces, face_ids, threshold=0.95,
+ 
+     unique_ids = np.unique(face_ids)
+     if show_info:
+-        print(f"连通区域数量：{len(parts)}")
+-        print(f"ID数量：{len(unique_ids)}")
++        print(f"Number of connected regions: {len(parts)}")
++        print(f"Number of IDs: {len(unique_ids)}")
+ 
+     # face_areas = calculate_face_areas(mesh)
+     total_area = np.sum(face_areas)
+     if show_info:
+-        print(f"总面积：{total_area}")
++        print(f"Total area: {total_area}")
+     part_areas = []
+     for i, part in enumerate(parts):
+         part_area = np.sum(face_areas[part])
+@@ -636,7 +642,7 @@ def do_post_process(face_areas, parts, adjacent_faces, face_ids, threshold=0.95,
+                         max_part = j
+                 if max_part != -1:
+                     if show_info:
+-                        print(f"合并mesh：{i} {max_part}")
++                        print(f"Merge mesh: {i} {max_part}")
+                     parts[max_part].extend(part)
+                     parts[i] = []
+                     target_face_id = face_ids[parts[max_part][0]]
+@@ -647,7 +653,7 @@ def do_post_process(face_areas, parts, adjacent_faces, face_ids, threshold=0.95,
+ 
+ 
+ def do_no_mask_process(parts, face_ids):
+-    # # 获取邻接面片
++    # # Get adjacent faces
+     # mesh_save = mesh.copy()
+     # face_adjacency = mesh.face_adjacency
+     # adjacent_faces = {}
+@@ -695,10 +701,10 @@ def aabb_increase(aabb1, aabb2):
+ def sort_multi_list(multi_list, key=lambda x: x[0], reverse=False):
+     '''
+     multi_list: [list1, list2, list3, list4, ...], len(list1)=N, len(list2)=N, len(list3)=N, ...
+-    key: 排序函数，默认按第一个元素排序
+-    reverse: 排序顺序，默认降序
++    key: Sorting function, default sort by first element
++    reverse: Sort order, default descending
+     return:
+-        [list1, list2, list3, list4, ...]: 按同一个顺序排序后的多个list
++        [list1, list2, list3, list4, ...]: Multiple lists sorted in the same order
+     '''
+     sorted_list = sorted(zip(*multi_list), key=key, reverse=reverse)
+     return zip(*sorted_list)
+@@ -713,38 +719,38 @@ class Timer:
+         if not Timer.STATE:
+             return
+         self.start_time = time.time()
+-        return self  # 可以返回 self 以便在 with 块内访问
++        return self  # Can return self for access within with block
+ 
+     def __exit__(self, exc_type, exc_val, exc_tb):
+         if not Timer.STATE:
+             return
+         self.end_time = time.time()
+         self.elapsed_time = self.end_time - self.start_time
+-        print(f">>>>>>代码{self.name} 运行时间: {self.elapsed_time:.4f} 秒")
++        print(f">>>>>>Code {self.name} execution time: {self.elapsed_time:.4f} seconds")
+ 
+-###################### NUMBA 加速 ######################
++###################### NUMBA acceleration ######################
+ @njit
+ def build_adjacent_faces_numba(face_adjacency):
+     """
+-    使用 Numba 加速构建邻接面片数组。
+-    :param face_adjacency: (N, 2) numpy 数组，包含邻接面片对。
++    Build adjacent faces array using Numba acceleration.
++    :param face_adjacency: (N, 2)  numpy array containing adjacent face pairs.
+     :return: 
+-        - adj_list: 一维数组，存储所有邻接面片。
+-        - offsets: 一维数组，记录每个面片的邻接起始位置。
++        - adj_list:  1D array storing all adjacent faces.
++        - offsets:  1D array recording the starting position of adjacency for each face.
+     """
+-    n_faces = np.max(face_adjacency) + 1  # 总面片数
+-    n_edges = face_adjacency.shape[0]     # 总邻接边数
++    n_faces = np.max(face_adjacency) + 1  # Total number of faces
++    n_edges = face_adjacency.shape[0]     # Total number of adjacent edges
+ 
+-    # 第一步：统计每个面片的邻接数量（度数）
++    # Step 1: Count the number of adjacencies (degree) for each face
+     degrees = np.zeros(n_faces, dtype=np.int32)
+     for i in range(n_edges):
+         f1, f2 = face_adjacency[i]
+         degrees[f1] += 1
+         degrees[f2] += 1
+-    max_degree = np.max(degrees)  # 最大度数
++    max_degree = np.max(degrees)  # Maximum degree
+ 
+-    adjacent_faces = np.ones((n_faces, max_degree), dtype=np.int32) * -1  # 邻接面片数组
+-    adjacent_faces_count = np.zeros(n_faces, dtype=np.int32)  # 邻接面片计数器
++    adjacent_faces = np.ones((n_faces, max_degree), dtype=np.int32) * -1  # Adjacent faces array
++    adjacent_faces_count = np.zeros(n_faces, dtype=np.int32)  # Adjacent faces counter
+     for i in range(n_edges):
+         f1, f2 = face_adjacency[i]
+         adjacent_faces[f1, adjacent_faces_count[f1]] = f2
+@@ -752,7 +758,7 @@ def build_adjacent_faces_numba(face_adjacency):
+         adjacent_faces[f2, adjacent_faces_count[f2]] = f1
+         adjacent_faces_count[f2] += 1
+     return adjacent_faces
+-###################### NUMBA 加速 ######################
++###################### NUMBA acceleration ######################
+ 
+ def mesh_sam(
+     model,
+@@ -768,34 +774,32 @@ def mesh_sam(
+     seed=42,
+     prompt_bs=32,
+ ):
+-    with Timer("加载mesh"):
++    with Timer("Load mesh"):
+         model, model_parallel = model
+         if clean_mesh_flag:
+             mesh = clean_mesh(mesh)
+             mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
+     if show_info:
+-        print(f"点数：{mesh.vertices.shape[0]} 面片数：{mesh.faces.shape[0]}")
++        print(f"Number of points: {mesh.vertices.shape[0]}  Number of faces: {mesh.faces.shape[0]}")
+ 
+-    point_num = 100000
+-    prompt_num = 400
+-    with Timer("获取邻接面片"):
++    with Timer("Get adjacent faces"):
+         face_adjacency = mesh.face_adjacency
+-    with Timer("处理邻接面片"):
++    with Timer("Process adjacent faces"):
+         adjacent_faces = build_adjacent_faces_numba(face_adjacency)
+ 
+     
+-    with Timer("采样点云"):
++    with Timer("Sample point cloud"):
+         _points, face_idx = trimesh.sample.sample_surface(mesh, point_num, seed=seed)
+         _points_org = _points.copy()
+         _points = normalize_pc(_points)
+         normals = mesh.face_normals[face_idx]
+     if show_info:
+-        print(f"点数：{point_num} 面片数：{mesh.faces.shape[0]}")
++        print(f"Number of points: {point_num}  Number of faces: {mesh.faces.shape[0]}")
+ 
+-    with Timer("获取特征"):
++    with Timer("Get features"):
+         _feats = get_feat(model, _points, normals)
+     if show_info:
+-        print("预处理特征")
++        print("Preprocessing features")
+ 
+     if save_mid_res:
+         feat_save = _feats.float().detach().cpu().numpy()
+@@ -810,9 +814,9 @@ def mesh_sam(
+         pc_save.export(os.path.join(save_path, "point_pca.glb"))
+         pc_save.export(os.path.join(save_path, "point_pca.ply"))
+         if show_info:
+-            print("PCA获取特征颜色")
++            print("Get feature colors using PCA")
+ 
+-    with Timer("FPS采样提示点"):
++    with Timer("FPS sample prompt points"):
+         fps_idx = fpsample.fps_sampling(_points, prompt_num)
+         _point_prompts = _points[fps_idx]
+     if save_mid_res:
+@@ -823,9 +827,9 @@ def mesh_sam(
+             os.path.join(save_path, "point_prompts_pca.ply")
+         )
+     if show_info:
+-        print("采样完成")
++        print("Sampling complete")
+ 
+-    with Timer("推理"):
++    with Timer("Inference"):
+         bs = prompt_bs
+         step_num = prompt_num // bs + 1
+         mask_res = []
+@@ -844,9 +848,9 @@ def mesh_sam(
+                 iou_res.append(pred_iou[j, max_idx[j]])
+     mask_res = np.stack(mask_res, axis=-1)  # [N, K]
+     if show_info:
+-        print("prmopt 推理完成")
++        print("Prompt inference complete")
+ 
+-    with Timer("根据IOU排序"):
++    with Timer("Sort by IOU"):
+         iou_res = np.array(iou_res).tolist()
+         mask_iou = [[mask_res[:, i], iou_res[i]] for i in range(prompt_num)]
+         mask_iou_sorted = sorted(mask_iou, key=lambda x: x[1], reverse=True)
+@@ -870,14 +874,14 @@ def mesh_sam(
+                     clusters[i].append(i)
+ 
+     if show_info:
+-        print(f"NMS完成，mask数量：{len(clusters)}")
++        print(f"NMS complete, number of masks: {len(clusters)}")
+ 
+     if save_mid_res:
+         part_mask_save_path = os.path.join(save_path, "part_mask")
+         if os.path.exists(part_mask_save_path):
+             shutil.rmtree(part_mask_save_path)
+         os.makedirs(part_mask_save_path, exist_ok=True)
+-        for i in tqdm(clusters.keys(), desc="保存mask", disable=not show_info):
++        for i in tqdm(clusters.keys(), desc="Save masks", disable=not show_info):
+             cluster_num = len(clusters[i])
+             cluster_iou = iou_sorted[i]
+             cluster_area = np.sum(mask_sorted[i])
+@@ -895,8 +899,8 @@ def mesh_sam(
+                 )
+             )
+ 
+-    # 过滤只有一个mask的cluster
+-    with Timer("过滤只有一个mask的cluster"):
++    # Filter clusters with only one mask
++    with Timer("Filter clusters with only one mask"):
+         filtered_clusters = []
+         other_clusters = []
+         for i in clusters.keys():
+@@ -906,12 +910,12 @@ def mesh_sam(
+                 other_clusters.append(i)
+     if show_info:
+         print(
+-            f"过滤前：{len(clusters)} 个cluster，"
+-            f"过滤后：{len(filtered_clusters)} 个cluster"
++            f"Before filtering: {len(clusters)}  clusters, "
++            f"After filtering: {len(filtered_clusters)}  clusters"
+         )
+ 
+-    # 再次合并
+-    with Timer("再次合并"):
++    # Merge again
++    with Timer("Merge again"):
+         filtered_clusters_num = len(filtered_clusters)
+         cluster2 = {}
+         is_union = [False] * filtered_clusters_num
+@@ -933,22 +937,22 @@ def mesh_sam(
+                     cluster2[cur_cluster].append(tar_cluster)
+                     is_union[j] = True
+     if show_info:
+-        print(f"再次合并，合并数量：{len(cluster2.keys())}")
++        print(f"Merge again，number of merges: {len(cluster2.keys())}")
+ 
+-    with Timer("计算没有mask的点"):
++    with Timer("Calculate points without mask"):
+         no_mask = np.ones(point_num)
+         for i in cluster2:
+             part_mask = mask_sorted[i]
+             no_mask[part_mask] = 0
+     if show_info:
+         print(
+-            f"{np.sum(no_mask == 1)} 个点没有mask,"
+-            f" 占比：{np.sum(no_mask == 1) / point_num:.4f}"
++            f"{np.sum(no_mask == 1)}  points without mask,"
++            f"  ratio: {np.sum(no_mask == 1) / point_num:.4f}"
+         )
+     
+-    with Timer("修补遗漏mask"):
+-        # 查询漏掉的mask
+-        for i in tqdm(range(len(mask_sorted)), desc="漏掉mask", disable=not show_info):
++    with Timer("Fix missing masks"):
++        # Query for missingmask
++        for i in tqdm(range(len(mask_sorted)), desc="Missing masks", disable=not show_info):
+             if i in cluster2:
+                 continue
+             part_mask = mask_sorted[i]
+@@ -972,9 +976,9 @@ def mesh_sam(
+                         )
+                     )
+     if show_info:
+-        print(f"修补遗漏mask：{len(cluster2.keys())}")
++        print(f"Fix missing masks：{len(cluster2.keys())}")
+ 
+-    with Timer("计算点云最终mask"):
++    with Timer("Calculate final point cloud mask"):
+         final_mask = list(cluster2.keys())
+         final_mask_area = [int(np.sum(mask_sorted[i])) for i in final_mask]
+         final_mask_area = [
+@@ -988,10 +992,10 @@ def mesh_sam(
+             final_mask_area_sorted[i][1] for i in range(len(final_mask_area))
+         ]
+     if show_info:
+-        print(f"最终mask数量：{len(final_mask_sorted)}")
++        print(f"Final number of masks: {len(final_mask_sorted)}")
+ 
+-    with Timer("点云上色"):
+-        # 生成color map
++    with Timer("Color point cloud"):
++        # Generate color map
+         color_map = {}
+         for i in final_mask_sorted:
+             part_color = np.random.rand(3) * 255
+@@ -1003,7 +1007,7 @@ def mesh_sam(
+             part_mask = mask_sorted[i]
+             result_mask[part_mask] = i
+     if save_mid_res:
+-        # 保存点云结果
++        # Save point cloud results
+         result_colors = np.zeros_like(_colors_pca)
+         for i in final_mask_sorted:
+             part_color = color_map[i]
+@@ -1016,11 +1020,11 @@ def mesh_sam(
+             os.path.join(save_path, "auto_mask_cluster.ply")
+         )
+         if show_info:
+-            print("保存点云完成")
++            print("Point cloud save complete")
+ 
+ 
+-    with Timer("投影Mesh并统计label"):
+-        # 保存mesh结果
++    with Timer("Project Mesh and count labels"):
++        # Save mesh results
+         face_seg_res = {}
+         for i in final_mask_sorted:
+             _part_mask = result_mask == i
+@@ -1039,20 +1043,20 @@ def mesh_sam(
+         face_ids = -np.ones(len(mesh.faces), dtype=np.int64) * 2
+         for i in tqdm(face_seg_res, leave=False, disable=True):
+             _seg_ids = np.array(face_seg_res[i])
+-            # 获取最多的seg_id
++            # Get the most common seg_id
+             _max_id = np.argmax(np.bincount(_seg_ids + 2)) - 2
+             face_ids[i] = _max_id
+         face_ids_org = face_ids.copy()
+     if show_info:
+-        print("生成face_ids完成")
++        print("face_ids generation complete")
+ 
+ 
+-    with Timer("第一次修复face_ids"):
++    with Timer("First fix of face_ids"):
+         face_ids += 1
+         face_ids = fix_label(face_ids, adjacent_faces, mesh=mesh, show_info=show_info)
+         face_ids -= 1
+     if show_info:
+-        print("修复face_ids完成")
++        print("face_ids fix complete")
+ 
+     color_map[-1] = np.array([255, 0, 0], dtype=np.uint8)
+ 
+@@ -1067,16 +1071,16 @@ def mesh_sam(
+             color_map,
+         )
+         if show_info:
+-            print("保存mesh结果完成")
++            print("Save mesh resultscomplete")
+ 
+-    with Timer("计算连通区域"):
++    with Timer("Calculate connected regions"):
+         face_areas = calculate_face_areas(mesh)
+         mesh_total_area = np.sum(face_areas)
+         parts = get_connected_region(face_ids, adjacent_faces)
+         connected_parts, _face_connected_parts_ids = get_connected_region(np.ones_like(face_ids), adjacent_faces, return_face_part_ids=True)
+     if show_info:
+-        print(f"共{len(parts)}个mesh")
+-    with Timer("排序连通区域"):
++        print(f"Total {len(parts)} meshes")
++    with Timer("Sort connected regions"):
+         parts_cp_idx = []
+         for x in parts:
+             _face_idx = x[0]
+@@ -1087,7 +1091,7 @@ def mesh_sam(
+         parts_cp_areas = [connected_parts_areas[x] for x in parts_cp_idx]
+         parts_sorted, parts_areas_sorted, parts_cp_areas_sorted = sort_multi_list([parts, parts_areas, parts_cp_areas], key=lambda x: x[1], reverse=True)
+ 
+-    with Timer("去除面积过小的区域"):
++    with Timer("Remove regions with small area"):
+         filtered_parts = []
+         other_parts = []
+         for i in range(len(parts_sorted)):
+@@ -1099,9 +1103,9 @@ def mesh_sam(
+             else:
+                 other_parts.append(i)
+     if show_info:
+-        print(f"保留{len(filtered_parts)}个mesh, 其他{len(other_parts)}个mesh")
++        print(f"Kept {len(filtered_parts)} meshes, other {len(other_parts)} meshes")
+ 
+-    with Timer("去除面积过小区域的label"):
++    with Timer("Remove labels of small area regions"):
+         face_ids_2 = face_ids.copy()
+         part_num = len(cluster2.keys())
+         for j in other_parts:
+@@ -1109,7 +1113,7 @@ def mesh_sam(
+             for i in parts:
+                 face_ids_2[i] = -1
+ 
+-    with Timer("第二次修复face_ids"):
++    with Timer("Second fix of face_ids"):
+         face_ids_3 = face_ids_2.copy()
+         face_ids_3 = fix_label(face_ids_3, adjacent_faces, mesh=mesh, show_info=show_info)
+ 
+@@ -1121,14 +1125,14 @@ def mesh_sam(
+             color_map,
+         )
+         if show_info:
+-            print("保存mesh结果完成")
++            print("Save mesh resultscomplete")
+ 
+-    with Timer("第二次计算连通区域"):
++    with Timer("Second calculation of connected regions"):
+         parts_2 = get_connected_region(face_ids_3, adjacent_faces)
+         parts_areas_2 = [float(np.sum(face_areas[x])) for x in parts_2]
+         parts_ids_2 = [face_ids_3[x[0]] for x in parts_2]
+ 
+-    with Timer("添加过大的缺失part"):
++    with Timer("Add oversized missing parts"):
+         color_map_2 = copy.deepcopy(color_map)
+         max_id = np.max(parts_ids_2)
+         for i in range(len(parts_2)):
+@@ -1141,18 +1145,18 @@ def mesh_sam(
+                     max_id += 1
+                     color_map_2[max_id] = np.random.rand(3) * 255
+                     if show_info:
+-                        print(f"新增part {max_id}")
++                        print(f"Added new part {max_id}")
+             # else:
+             #     parts_ids_2[i] = -1
+ 
+-    with Timer("赋值新的face_ids"):
++    with Timer("Assign new face_ids"):
+         face_ids_4 = face_ids_3.copy()
+         for i in range(len(parts_2)):
+             _parts = parts_2[i]
+             _parts_id = parts_ids_2[i]
+             for j in _parts:
+                 face_ids_4[j] = _parts_id
+-    with Timer("计算part和label的aabb"):
++    with Timer("Calculate aabb for parts and labels"):
+         ids_aabb = {}
+         unique_ids = np.unique(face_ids_4)
+         for i in unique_ids:
+@@ -1176,9 +1180,9 @@ def mesh_sam(
+             max_xyz = np.max(_points, axis=0)
+             parts_2_aabb.append([min_xyz, max_xyz])
+ 
+-    with Timer("计算part的邻居"):
++    with Timer("Calculate neighbors of parts"):
+         parts_2_neighbor = find_neighbor_part(parts_2, adjacent_faces, parts_2_aabb, parts_ids_2)
+-    with Timer("合并无mask区域"):
++    with Timer("Merge regions without mask"):
+         for i in range(len(parts_2)):
+             _parts = parts_2[i]
+             _ids = parts_ids_2[i]
+@@ -1200,7 +1204,7 @@ def mesh_sam(
+                     parts_ids_2[i] = _min_id
+     
+ 
+-    with Timer("再次赋值新的face_ids"):
++    with Timer("Assign new face_ids again"):
+         face_ids_4 = face_ids_3.copy()
+         for i in range(len(parts_2)):
+             _parts = parts_2[i]
+@@ -1229,7 +1233,7 @@ def mesh_sam(
+                 color_map_2,
+             )
+         final_face_ids = face_ids_5
+-    with Timer("计算最后的aabb"):
++    with Timer("Calculate final aabb"):
+         aabb = get_aabb_from_face_ids(mesh, final_face_ids)
+     return aabb, final_face_ids, mesh
+ 
+@@ -1244,11 +1248,11 @@ class AutoMask:
+         post_process=True,
+     ):
+         """
+-        ckpt_path: str, 模型路径
+-        point_num: int, 采样点数量
+-        prompt_num: int, 提示数量
+-        threshold: float, 阈值
+-        post_process: bool, 是否后处理
++        ckpt_path: str, Model path
++        point_num: int, Number of sample points
++        prompt_num: int, Number of prompts
++        threshold: float, Threshold
++        post_process: bool, Whether to post-process
+         """
+         self.model = P3SAM()
+         self.model.load_state_dict(ckpt_path)
+@@ -1261,19 +1265,50 @@ class AutoMask:
+         self.threshold = threshold
+         self.post_process = post_process
+ 
++    def release(self):
++        """
++        Release GPU memory by deleting model references and clearing CUDA cache.
++        """
++        import gc
++        
++        # Move models to CPU first (helps with memory release)
++        if hasattr(self, 'model') and self.model is not None:
++            self.model.cpu()
++            del self.model
++            self.model = None
++        
++        if hasattr(self, 'model_parallel') and self.model_parallel is not None:
++            self.model_parallel.cpu()
++            del self.model_parallel
++            self.model_parallel = None
++        
++        # Force garbage collection
++        gc.collect()
++        
++        # Clear CUDA cache
++        if torch.cuda.is_available():
++            torch.cuda.empty_cache()
++    
++    def __del__(self):
++        """Destructor - automatically release resources."""
++        try:
++            self.release()
++        except:
++            pass  # Ignore errors during destruction
++
+     def predict_aabb(
+         self, mesh, point_num=None, prompt_num=None, threshold=None, post_process=None, save_path=None, save_mid_res=False, show_info=True, clean_mesh_flag=True, seed=42, is_parallel=True, prompt_bs=32
+     ):
+         """
+         Parameters:
+-            mesh: trimesh.Trimesh, 输入网格
+-            point_num: int, 采样点数量
+-            prompt_num: int, 提示数量
+-            threshold: float, 阈值
+-            post_process: bool, 是否后处理
++            mesh: trimesh.Trimesh, Input mesh
++            point_num: int, Number of sample points
++            prompt_num: int, Number of prompts
++            threshold: float, Threshold
++            post_process: bool, Whether to post-process
+         Returns:
+-            aabb: np.ndarray, 包围盒
+-            face_ids: np.ndarray, 面id
++            aabb: np.ndarray, Bounding box
++            face_ids: np.ndarray, Face IDs
+         """
+         point_num = point_num if point_num is not None else self.point_num
+         prompt_num = prompt_num if prompt_num is not None else self.prompt_num
+@@ -1304,22 +1339,23 @@ def set_seed(seed):
+         torch.backends.cudnn.deterministic = True
+         torch.backends.cudnn.benchmark = False
+ 
+-if __name__ == '__main__':
++def main():
++    """Main entry point for P3-SAM auto mask generation."""
+     argparser = argparse.ArgumentParser()
+-    argparser.add_argument('--ckpt_path', type=str, default=None, help='模型路径')
+-    argparser.add_argument('--mesh_path', type=str, default='assets/1.glb', help='输入网格路径')
+-    argparser.add_argument('--output_path', type=str, default='results/1', help='保存路径')
+-    argparser.add_argument('--point_num', type=int, default=100000, help='采样点数量')
+-    argparser.add_argument('--prompt_num', type=int, default=400, help='提示数量')
+-    argparser.add_argument('--threshold', type=float, default=0.95, help='阈值')
+-    argparser.add_argument('--post_process', type=int, default=0, help='是否后处理')
+-    argparser.add_argument('--save_mid_res', type=int, default=1, help='是否保存中间结果')
+-    argparser.add_argument('--show_info', type=int, default=1, help='是否显示信息')
+-    argparser.add_argument('--show_time_info', type=int, default=1, help='是否显示时间信息')
+-    argparser.add_argument('--seed', type=int, default=42, help='随机种子')
+-    argparser.add_argument('--parallel', type=int, default=1, help='是否使用多卡')
+-    argparser.add_argument('--prompt_bs', type=int, default=32, help='提示点推理时的batch size大小')
+-    argparser.add_argument('--clean_mesh', type=int, default=1, help='是否清洗网格')
++    argparser.add_argument('--ckpt_path', type=str, default=None, help='Model path')
++    argparser.add_argument('--mesh_path', type=str, default='assets/1.glb', help='Input meshpath')
++    argparser.add_argument('--output_path', type=str, default='results/1', help='save path')
++    argparser.add_argument('--point_num', type=int, default=100000, help='Number of sample points')
++    argparser.add_argument('--prompt_num', type=int, default=400, help='Number of prompts')
++    argparser.add_argument('--threshold', type=float, default=0.95, help='Threshold')
++    argparser.add_argument('--post_process', type=int, default=1, help='Whether to post-process')
++    argparser.add_argument('--save_mid_res', type=int, default=1, help='Whether to save intermediate results')
++    argparser.add_argument('--show_info', type=int, default=1, help='Whether to show information')
++    argparser.add_argument('--show_time_info', type=int, default=1, help='Whether to show timing information')
++    argparser.add_argument('--seed', type=int, default=42, help='Random seed')
++    argparser.add_argument('--parallel', type=int, default=1, help='Whether to use multiple GPUs')
++    argparser.add_argument('--prompt_bs', type=int, default=32, help='prompt pointsInferencewhenbatch sizesize')
++    argparser.add_argument('--clean_mesh', type=int, default=0, help='Whether to clean mesh')
+     args = argparser.parse_args()
+     Timer.STATE = args.show_time_info
+ 
+@@ -1337,6 +1373,7 @@ if __name__ == '__main__':
+             _output_path = os.path.join(output_path, file[:-4])
+             os.makedirs(_output_path, exist_ok=True)
+             mesh = trimesh.load(_mesh_path, force='mesh')
++            mesh.export(os.path.join(_output_path, 'original_mesh.glb'))
+             set_seed(args.seed)
+             aabb, face_ids, mesh = auto_mask.predict_aabb(mesh, 
+                                                         save_path=_output_path, 
+@@ -1348,9 +1385,11 @@ if __name__ == '__main__':
+                                                         show_info=args.show_info,
+                                                         seed=args.seed,
+                                                         is_parallel=args.parallel,
+-                                                        clean_mesh_flag=args.clean_mesh,)
++                                                        clean_mesh_flag=args.clean_mesh,
++                                                        prompt_bs=args.prompt_bs)
+     else:     
+         mesh = trimesh.load(mesh_path, force='mesh')
++        mesh.export(os.path.join(output_path, 'original_mesh.glb'))
+         set_seed(args.seed)
+         aabb, face_ids, mesh = auto_mask.predict_aabb(mesh, 
+                                                     save_path=output_path, 
+@@ -1362,10 +1401,11 @@ if __name__ == '__main__':
+                                                     show_info=args.show_info,
+                                                     seed=args.seed,
+                                                     is_parallel=args.parallel,
+-                                                    clean_mesh_flag=args.clean_mesh,)
++                                                    clean_mesh_flag=args.clean_mesh,
++                                                    prompt_bs=args.prompt_bs)
+ 
+     ###############################################
+-    ## 可以通过以下代码保存返回的结果
++    ## Can be done through the followingCode Save the returned results
+     ## You can save the returned result by the following code
+     ################# save result #################
+     # color_map = {}
+@@ -1398,6 +1438,11 @@ if __name__ == '__main__':
+     # scene_mesh.export(os.path.join(output_path, 'auto_mask_aabb.glb'))
+     ################# save result #################
+ 
++
++if __name__ == '__main__':
++    main()
++
++
+ '''
+ python auto_mask.py --parallel 0 
+ python auto_mask.py --ckpt_path ../weights/last.ckpt --mesh_path assets/1.glb --output_path results/1 --parallel 0 
+diff --git a/P3-SAM/demo/auto_mask_no_postprocess.py b/P3-SAM/demo/auto_mask_no_postprocess.py
+index e67fad5..7dea7b7 100644
+--- a/P3-SAM/demo/auto_mask_no_postprocess.py
++++ b/P3-SAM/demo/auto_mask_no_postprocess.py
+@@ -22,8 +22,14 @@ from collections import defaultdict
+ import numba
+ from numba import njit
+ 
+-sys.path.append("..")
+-from model import build_P3SAM, load_state_dict
++# Use proper package-relative imports
++try:
++    # When installed as package - import from parent package
++    from ..model import build_P3SAM, load_state_dict
++except (ImportError, ValueError):
++    # Fallback for direct script execution from demo directory
++    sys.path.append("..")
++    from model import build_P3SAM, load_state_dict
+ 
+ from utils.chamfer3D.dist_chamfer_3D import chamfer_3DDist
+ 
+@@ -65,7 +71,7 @@ class P3SAM(nn.Module):
+         point_prompt = point_prompt.transpose(0, 1)  # [N, K, 3]
+         feats_seg = torch.cat([feats, points, point_prompt], dim=-1)  # [N, K, 512+3+3]
+ 
+-        # 预测mask stage-1
++        # Predict mask stage-1
+         pred_mask_1 = self.seg_mlp_1(feats_seg).squeeze(-1)  # [N, K]
+         pred_mask_2 = self.seg_mlp_2(feats_seg).squeeze(-1)  # [N, K]
+         pred_mask_3 = self.seg_mlp_3(feats_seg).squeeze(-1)  # [N, K]
+@@ -74,7 +80,7 @@ class P3SAM(nn.Module):
+         )  # [N, K, 3]
+ 
+         for _ in range(iter):
+-            # 预测mask stage-2
++            # Predict mask stage-2
+             feats_seg_2 = torch.cat([feats_seg, pred_mask], dim=-1)  # [N, K, 512+3+3+3]
+             feats_seg_global = self.seg_s2_mlp_g(feats_seg_2)  # [N, K, 512]
+             feats_seg_global = torch.max(feats_seg_global, dim=0).values  # [K, 512]
+@@ -196,16 +202,16 @@ def cal_single_iou(m1, m2):
+ 
+ def iou_3d(box1, box2, signle=None):
+     """
+-    计算两个三维边界框的交并比 (IoU)
++    Calculate the Intersection over Union (IoU) of two 3D bounding boxes
+ 
+-    参数:
+-        box1 (list): 第一个边界框的坐标 [x1_min, y1_min, z1_min, x1_max, y1_max, z1_max]
+-        box2 (list): 第二个边界框的坐标 [x2_min, y2_min, z2_min, x2_max, y2_max, z2_max]
++    Parameters:
++        box1 (list): Coordinates of the first bounding box [x1_min, y1_min, z1_min, x1_max, y1_max, z1_max]
++        box2 (list): Coordinates of the second bounding box [x2_min, y2_min, z2_min, x2_max, y2_max, z2_max]
+ 
+-    返回:
+-        float: 交并比 (IoU) 值
++    Returns:
++        float: IoU value
+     """
+-    # 计算交集的坐标
++    # Calculate intersection coordinates
+     intersection_xmin = max(box1[0], box2[0])
+     intersection_ymin = max(box1[1], box2[1])
+     intersection_zmin = max(box1[2], box2[2])
+@@ -213,27 +219,27 @@ def iou_3d(box1, box2, signle=None):
+     intersection_ymax = min(box1[4], box2[4])
+     intersection_zmax = min(box1[5], box2[5])
+ 
+-    # 判断是否有交集
++    # Check if there is an intersection
+     if (
+         intersection_xmin >= intersection_xmax
+         or intersection_ymin >= intersection_ymax
+         or intersection_zmin >= intersection_zmax
+     ):
+-        return 0.0  # 无交集
++        return 0.0  # No intersection
+ 
+-    # 计算交集的体积
++    # Calculate intersection volume
+     intersection_volume = (
+         (intersection_xmax - intersection_xmin)
+         * (intersection_ymax - intersection_ymin)
+         * (intersection_zmax - intersection_zmin)
+     )
+ 
+-    # 计算两个盒子的体积
++    # Calculate volume of both boxes
+     box1_volume = (box1[3] - box1[0]) * (box1[4] - box1[1]) * (box1[5] - box1[2])
+     box2_volume = (box2[3] - box2[0]) * (box2[4] - box2[1]) * (box2[5] - box2[2])
+ 
+     if signle is None:
+-        # 计算并集的体积
++        # Calculate union volume
+         union_volume = box1_volume + box2_volume - intersection_volume
+     elif signle == "1":
+         union_volume = box1_volume
+@@ -242,7 +248,7 @@ def iou_3d(box1, box2, signle=None):
+     else:
+         raise ValueError("signle must be None or 1 or 2")
+ 
+-    # 计算 IoU
++    # Calculate IoU
+     iou = intersection_volume / union_volume if union_volume > 0 else 0.0
+     return iou
+ 
+@@ -267,11 +273,11 @@ def clean_mesh(mesh):
+     """
+     mesh: trimesh.Trimesh
+     """
+-    # 1. 合并接近的顶点
++    # 1. Merge nearby vertices
+     mesh.merge_vertices()
+ 
+-    # 2. 删除重复的顶点
+-    # 3. 删除重复的面片
++    # 2. Remove duplicate vertices
++    # 3. Remove duplicate faces
+     mesh.process(True)
+     return mesh
+ 
+@@ -298,37 +304,37 @@ class Timer:
+ 
+     def __enter__(self):
+         self.start_time = time.time()
+-        return self  # 可以返回 self 以便在 with 块内访问
++        return self  # Can return self for access within with block
+ 
+     def __exit__(self, exc_type, exc_val, exc_tb):
+         self.end_time = time.time()
+         self.elapsed_time = self.end_time - self.start_time
+-        print(f">>>>>>代码{self.name} 运行时间: {self.elapsed_time:.4f} 秒")
++        print(f">>>>>>Code {self.name} execution time: {self.elapsed_time:.4f} seconds")
+ 
+ 
+ def sample_points_pre_face(vertices, faces, n_point_per_face=2000):
+-    n_f = faces.shape[0]  # 面片数量
++    n_f = faces.shape[0]  # Number of faces
+ 
+-    # 生成随机数 u, v
++    # Generate random numbers u, v
+     u = np.sqrt(np.random.rand(n_f, n_point_per_face, 1))  # (n_f, n_point_per_face, 1)
+     v = np.random.rand(n_f, n_point_per_face, 1)  # (n_f, n_point_per_face, 1)
+ 
+-    # 计算 barycentric 坐标
++    # Calculate barycentric coordinates
+     w0 = 1 - u
+     w1 = u * (1 - v)
+     w2 = u * v  # (n_f, n_point_per_face, 1)
+ 
+-    # 从顶点中提取每个面的三个顶点
++    # Extract three vertices for each face from vertices
+     face_v_0 = vertices[faces[:, 0].reshape(-1)]  # (n_f, 3)
+     face_v_1 = vertices[faces[:, 1].reshape(-1)]  # (n_f, 3)
+     face_v_2 = vertices[faces[:, 2].reshape(-1)]  # (n_f, 3)
+ 
+-    # 扩展维度以匹配 w0, w1, w2 的形状
++    # Expand dimensions to match w0, w1, w2  shape
+     face_v_0 = face_v_0.reshape(n_f, 1, 3)  # (n_f, 1, 3)
+     face_v_1 = face_v_1.reshape(n_f, 1, 3)  # (n_f, 1, 3)
+     face_v_2 = face_v_2.reshape(n_f, 1, 3)  # (n_f, 1, 3)
+ 
+-    # 计算每个点的坐标
++    # Calculate coordinates of each point
+     points = w0 * face_v_0 + w1 * face_v_1 + w2 * face_v_2  # (n_f, n_point_per_face, 3)
+ 
+     return points
+@@ -353,15 +359,15 @@ def cal_cd_batch(p1, p2, pn=100000):
+ 
+ def remove_outliers_iqr(data, factor=1.5):
+     """
+-    基于 IQR 去除离群值
+-    :param data: 输入的列表或 NumPy 数组
+-    :param factor: IQR 的倍数（默认 1.5）
+-    :return: 去除离群值后的列表
++    Remove outliers based on IQR
++    :param data: Input list or NumPy array
++    :param factor: IQR multiplier（default 1.5）
++    :return: List with outliers removed
+     """
+     data = np.array(data, dtype=np.float32)
+-    q1 = np.percentile(data, 25)  # 第一四分位数
+-    q3 = np.percentile(data, 75)  # 第三四分位数
+-    iqr = q3 - q1  # 四分位距
++    q1 = np.percentile(data, 25)  # First quartile
++    q3 = np.percentile(data, 75)  # Third quartile
++    iqr = q3 - q1  # Interquartile range
+     lower_bound = q1 - factor * iqr
+     upper_bound = q3 + factor * iqr
+     return data[(data >= lower_bound) & (data <= upper_bound)].tolist()
+@@ -391,7 +397,7 @@ def save_mesh(save_path, mesh, face_ids, color_map):
+     mesh_save.visual.face_colors = face_colors
+     mesh_save.export(save_path)
+     mesh_save.export(save_path.replace(".glb", ".ply"))
+-    # print('保存mesh完成')
++    # print('Mesh save complete')
+ 
+     scene_mesh = trimesh.Scene()
+     scene_mesh.add_geometry(mesh_save)
+@@ -437,18 +443,16 @@ def mesh_sam(
+     seed=42,
+     prompt_bs=32,
+ ):
+-    with Timer("加载mesh"):
++    with Timer("Load mesh"):
+         model, model_parallel = model
+         if clean_mesh_flag:
+             mesh = clean_mesh(mesh)
+         mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces, process=False)
+     if show_info:
+-        print(f"点数：{mesh.vertices.shape[0]} 面片数：{mesh.faces.shape[0]}")
++        print(f"Number of points: {mesh.vertices.shape[0]}  Number of faces: {mesh.faces.shape[0]}")
+ 
+-    point_num = 100000
+-    prompt_num = 400
+ 
+-    with Timer("采样点云"):
++    with Timer("Sample point cloud"):
+         _points, face_idx = trimesh.sample.sample_surface(mesh, point_num, seed=seed)
+         _points_org = _points.copy()
+         _points = normalize_pc(_points)
+@@ -456,12 +460,12 @@ def mesh_sam(
+         # _points = _points + np.random.normal(0, 1, size=_points.shape) * 0.01
+         # normals = normals * 0. # debug no normal
+     if show_info:
+-        print(f"点数：{point_num} 面片数：{mesh.faces.shape[0]}")
++        print(f"Number of points: {point_num}  Number of faces: {mesh.faces.shape[0]}")
+ 
+-    with Timer("获取特征"):
++    with Timer("Get features"):
+         _feats = get_feat(model, _points, normals)
+     if show_info:
+-        print("预处理特征")
++        print("Preprocessing features")
+ 
+     if save_mid_res:
+         feat_save = _feats.float().detach().cpu().numpy()
+@@ -476,9 +480,9 @@ def mesh_sam(
+         pc_save.export(os.path.join(save_path, "point_pca.glb"))
+         pc_save.export(os.path.join(save_path, "point_pca.ply"))
+         if show_info:
+-            print("PCA获取特征颜色")
++            print("PCAGet featurescolors")
+ 
+-    with Timer("FPS采样提示点"):
++    with Timer("FPS sample prompt points"):
+         fps_idx = fpsample.fps_sampling(_points, prompt_num)
+         _point_prompts = _points[fps_idx]
+     if save_mid_res:
+@@ -489,9 +493,9 @@ def mesh_sam(
+             os.path.join(save_path, "point_prompts_pca.ply")
+         )
+     if show_info:
+-        print("采样完成")
++        print("Sampling complete")
+ 
+-    with Timer("推理"):
++    with Timer("Inference"):
+         bs = prompt_bs
+         step_num = prompt_num // bs + 1
+         mask_res = []
+@@ -510,9 +514,9 @@ def mesh_sam(
+                 iou_res.append(pred_iou[j, max_idx[j]])
+     mask_res = np.stack(mask_res, axis=-1)  # [N, K]
+     if show_info:
+-        print("prmopt 推理完成")
++        print("prmopt Inferencecomplete")
+ 
+-    with Timer("根据IOU排序"):
++    with Timer("Sort by IOU"):
+         iou_res = np.array(iou_res).tolist()
+         mask_iou = [[mask_res[:, i], iou_res[i]] for i in range(prompt_num)]
+         mask_iou_sorted = sorted(mask_iou, key=lambda x: x[1], reverse=True)
+@@ -548,14 +552,14 @@ def mesh_sam(
+ 
+     # print(clusters)
+     if show_info:
+-        print(f"NMS完成，mask数量：{len(clusters)}")
++        print(f"NMS complete, number of masks: {len(clusters)}")
+ 
+     if save_mid_res:
+         part_mask_save_path = os.path.join(save_path, "part_mask")
+         if os.path.exists(part_mask_save_path):
+             shutil.rmtree(part_mask_save_path)
+         os.makedirs(part_mask_save_path, exist_ok=True)
+-        for i in tqdm(clusters.keys(), desc="保存mask", disable=not show_info):
++        for i in tqdm(clusters.keys(), desc="Save masks", disable=not show_info):
+             cluster_num = len(clusters[i])
+             cluster_iou = iou_sorted[i]
+             cluster_area = np.sum(mask_sorted[i])
+@@ -573,8 +577,8 @@ def mesh_sam(
+                 )
+             )
+ 
+-    # 过滤只有一个mask的cluster
+-    with Timer("过滤只有一个mask的cluster"):
++    # Filter clusters with only one mask
++    with Timer("Filter clusters with only one mask"):
+         filtered_clusters = []
+         other_clusters = []
+         for i in clusters.keys():
+@@ -584,12 +588,12 @@ def mesh_sam(
+                 other_clusters.append(i)
+     if show_info:
+         print(
+-            f"过滤前：{len(clusters)} 个cluster，"
+-            f"过滤后：{len(filtered_clusters)} 个cluster"
++            f"Before filtering: {len(clusters)}  clusters，"
++            f"After filtering: {len(filtered_clusters)}  clusters"
+         )
+ 
+-    # 再次合并
+-    with Timer("再次合并"):
++    # Merge again
++    with Timer("Merge again"):
+         filtered_clusters_num = len(filtered_clusters)
+         cluster2 = {}
+         is_union = [False] * filtered_clusters_num
+@@ -613,22 +617,22 @@ def mesh_sam(
+                     cluster2[cur_cluster].append(tar_cluster)
+                     is_union[j] = True
+     if show_info:
+-        print(f"再次合并，合并数量：{len(cluster2.keys())}")
++        print(f"Merge again，number of merges：{len(cluster2.keys())}")
+ 
+-    with Timer("计算没有mask的点"):
++    with Timer("Calculate points without mask"):
+         no_mask = np.ones(point_num)
+         for i in cluster2:
+             part_mask = mask_sorted[i]
+             no_mask[part_mask] = 0
+     if show_info:
+         print(
+-            f"{np.sum(no_mask == 1)} 个点没有mask,"
+-            f" 占比：{np.sum(no_mask == 1) / point_num:.4f}"
++            f"{np.sum(no_mask == 1)}  points without mask,"
++            f"  ratio: {np.sum(no_mask == 1) / point_num:.4f}"
+         )
+ 
+-    with Timer("修补遗漏mask"):
+-        # 查询漏掉的mask
+-        for i in tqdm(range(len(mask_sorted)), desc="漏掉mask", disable=not show_info):
++    with Timer("Fix missing masks"):
++        # Query for missing masks
++        for i in tqdm(range(len(mask_sorted)), desc="Missing masks", disable=not show_info):
+             if i in cluster2:
+                 continue
+             part_mask = mask_sorted[i]
+@@ -654,9 +658,9 @@ def mesh_sam(
+     # print(cluster2)
+     # print(len(cluster2.keys()))
+     if show_info:
+-        print(f"修补遗漏mask：{len(cluster2.keys())}")
++        print(f"Fix missing masks：{len(cluster2.keys())}")
+ 
+-    with Timer("计算点云最终mask"):
++    with Timer("Calculate final point cloud mask"):
+         final_mask = list(cluster2.keys())
+         final_mask_area = [int(np.sum(mask_sorted[i])) for i in final_mask]
+         final_mask_area = [
+@@ -674,10 +678,10 @@ def mesh_sam(
+     # print(final_mask_sorted)
+     # print(final_mask_area_sorted)
+     if show_info:
+-        print(f"最终mask数量：{len(final_mask_sorted)}")
++        print(f"Final number of masks: {len(final_mask_sorted)}")
+ 
+-    with Timer("点云上色"):
+-        # 生成color map
++    with Timer("Color point cloud"):
++        # Generate color map
+         color_map = {}
+         for i in final_mask_sorted:
+             part_color = np.random.rand(3) * 255
+@@ -689,7 +693,7 @@ def mesh_sam(
+             part_mask = mask_sorted[i]
+             result_mask[part_mask] = i
+     if save_mid_res:
+-        # 保存点云结果
++        # Save point cloud results
+         result_colors = np.zeros_like(_colors_pca)
+         for i in final_mask_sorted:
+             part_color = color_map[i]
+@@ -702,9 +706,9 @@ def mesh_sam(
+             os.path.join(save_path, "auto_mask_cluster.ply")
+         )
+         if show_info:
+-            print("保存点云完成")
++            print("Point cloud save complete")
+ 
+-    with Timer("后处理"):
++    with Timer("Post-process"):
+         valid_mask = result_mask >= 0
+         _org = _points_org[valid_mask]
+         _results = result_mask[valid_mask]
+@@ -731,7 +735,7 @@ def mesh_sam(
+             color_map,
+         )
+ 
+-    with Timer("计算最后的aabb"):
++    with Timer("Calculate final aabb"):
+         aabb = get_aabb_from_face_ids(mesh, final_face_ids)
+     return aabb, final_face_ids, mesh
+ 
+@@ -747,11 +751,11 @@ class AutoMask:
+         automask_instance=None,
+     ):
+         """
+-        ckpt_path: str, 模型路径
+-        point_num: int, 采样点数量
+-        prompt_num: int, 提示数量
+-        threshold: float, 阈值
+-        post_process: bool, 是否后处理
++        ckpt_path: str, Model path
++        point_num: int, Number of sample points
++        prompt_num: int, Number of prompts
++        threshold: float, Threshold
++        post_process: bool, Whether to post-process
+         """
+         if automask_instance is not None:
+             self.model = automask_instance.model
+@@ -785,14 +789,14 @@ class AutoMask:
+     ):
+         """
+         Parameters:
+-            mesh: trimesh.Trimesh, 输入网格
+-            point_num: int, 采样点数量
+-            prompt_num: int, 提示数量
+-            threshold: float, 阈值
+-            post_process: bool, 是否后处理
++            mesh: trimesh.Trimesh, Input mesh
++            point_num: int, Number of sample points
++            prompt_num: int, Number of prompts
++            threshold: float, Threshold
++            post_process: bool, Whether to post-process
+         Returns:
+-            aabb: np.ndarray, 包围盒
+-            face_ids: np.ndarray, 面id
++            aabb: np.ndarray, Bounding box
++            face_ids: np.ndarray, Face IDs
+         """
+         point_num = point_num if point_num is not None else self.point_num
+         prompt_num = prompt_num if prompt_num is not None else self.prompt_num
+@@ -828,31 +832,31 @@ def set_seed(seed):
+ if __name__ == "__main__":
+     argparser = argparse.ArgumentParser()
+     argparser.add_argument(
+-        "--ckpt_path", type=str, default=None, help="模型路径"
++        "--ckpt_path", type=str, default=None, help="Model path"
+     )
+     argparser.add_argument(
+-        "--mesh_path", type=str, default="assets/1.glb", help="输入网格路径"
++        "--mesh_path", type=str, default="assets/1.glb", help="Input meshpath"
+     )
+     argparser.add_argument(
+-        "--output_path", type=str, default="results/1", help="保存路径"
++        "--output_path", type=str, default="results/1", help="save path"
+     )
+-    argparser.add_argument("--point_num", type=int, default=100000, help="采样点数量")
+-    argparser.add_argument("--prompt_num", type=int, default=400, help="提示数量")
+-    argparser.add_argument("--threshold", type=float, default=0.95, help="阈值")
+-    argparser.add_argument("--post_process", type=int, default=0, help="是否后处理")
++    argparser.add_argument("--point_num", type=int, default=100000, help="Number of sample points")
++    argparser.add_argument("--prompt_num", type=int, default=400, help="Number of prompts")
++    argparser.add_argument("--threshold", type=float, default=0.95, help="Threshold")
++    argparser.add_argument("--post_process", type=int, default=0, help="Whether to post-process")
+     argparser.add_argument(
+-        "--save_mid_res", type=int, default=1, help="是否保存中间结果"
++        "--save_mid_res", type=int, default=1, help="Whether to save intermediate results"
+     )
+-    argparser.add_argument("--show_info", type=int, default=1, help="是否显示信息")
++    argparser.add_argument("--show_info", type=int, default=1, help="Whether to show information")
+     argparser.add_argument(
+-        "--show_time_info", type=int, default=1, help="是否显示时间信息"
++        "--show_time_info", type=int, default=1, help="Whether to show timing information"
+     )
+-    argparser.add_argument("--seed", type=int, default=42, help="随机种子")
+-    argparser.add_argument("--parallel", type=int, default=1, help="是否使用多卡")
++    argparser.add_argument("--seed", type=int, default=42, help="Random seed")
++    argparser.add_argument("--parallel", type=int, default=1, help="Whether to use multiple GPUs")
+     argparser.add_argument(
+-        "--prompt_bs", type=int, default=32, help="提示点推理时的batch size大小"
++        "--prompt_bs", type=int, default=32, help="Batch size for prompt point inference"
+     )
+-    argparser.add_argument("--clean_mesh", type=int, default=1, help="是否清洗网格")
++    argparser.add_argument("--clean_mesh", type=int, default=1, help="Whether to clean mesh")
+     args = argparser.parse_args()
+     Timer.STATE = args.show_time_info
+ 
+@@ -903,7 +907,7 @@ if __name__ == "__main__":
+         )
+ 
+     ###############################################
+-    ## 可以通过以下代码保存返回的结果
++    ## Can save the returned results through the following code
+     ## You can save the returned result by the following code
+     ################# save result #################
+     # color_map = {}
+diff --git a/P3-SAM/demo/gradio_demo.py b/P3-SAM/demo/gradio_demo.py
+index 5c0dd2e..7754973 100644
+--- a/P3-SAM/demo/gradio_demo.py
++++ b/P3-SAM/demo/gradio_demo.py
+@@ -10,7 +10,7 @@ from auto_mask_no_postprocess import AutoMask as AutoMaskNoPostProcess
+ import trimesh
+ 
+ argparser = argparse.ArgumentParser()
+-argparser.add_argument('--ckpt_path', type=str, default=None, help='模型路径')
++argparser.add_argument('--ckpt_path', type=str, default=None, help='Model path')
+ args = argparser.parse_args()
+ 
+ automask = AutoMask(args.ckpt_path)
+diff --git a/P3-SAM/model.py b/P3-SAM/model.py
+index 15d64d1..9c4d66e 100644
+--- a/P3-SAM/model.py
++++ b/P3-SAM/model.py
+@@ -1,10 +1,12 @@
+ import os
+ import sys
+-import torch 
+-import torch.nn as nn 
++import torch
++import torch.nn as nn
++
++from safetensors.torch import load_file as load_safetensors
+ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'XPart/partgen'))
+ from models import sonata
+-from utils.misc import smart_load_model
++# from utils.misc import smart_load_model
+ 
+ '''
+ This is the P3-SAM model.
+@@ -15,7 +17,8 @@ The model is composed of three parts:
+ '''
+ def build_P3SAM(self): #build p3sam
+     ######################## Sonata ########################
+-    self.sonata = sonata.load("sonata", repo_id="facebook/sonata", download_root='/root/sonata')
++    sonata_cache = os.path.expanduser('~/.cache/sonata')
++    self.sonata = sonata.load("sonata", repo_id="facebook/sonata", download_root=sonata_cache)
+     self.mlp = nn.Sequential(
+             nn.Linear(1232, 512),
+             nn.GELU(),
+@@ -113,6 +116,20 @@ def load_state_dict(self,
+                     ignore_seg_s2_mlp=False, 
+                     ignore_iou_mlp=False):   # load checkpoint
+     if ckpt_path is not None:
++        if ckpt_path.endswith('.safetensors'):
++            state_dict = load_safetensors(ckpt_path)
++        else:
++            state_dict = torch.load(ckpt_path, map_location="cpu")["state_dict"]
++        print(f'loading checkpoint from {ckpt_path}')
++        # Check if it's a safetensors file
++        if ckpt_path.endswith('.safetensors'):
++            state_dict = load_safetensors(ckpt_path)
++            # Safetensors may or may not have a "state_dict" key wrapper
++            if "state_dict" in state_dict:
++                state_dict = state_dict["state_dict"]
++        else:
++            # Load .ckpt or .pt files with torch.load
++            state_dict = torch.load(ckpt_path, map_location="cpu", weights_only=True)["state_dict"]
+         if ckpt_path.endswith('.pt') or ckpt_path.endswith('.ckpt'):
+             state_dict = torch.load(ckpt_path, map_location="cpu")["state_dict"]
+         elif ckpt_path.endswith('.safetensors'):
+@@ -122,7 +139,7 @@ def load_state_dict(self,
+         # download from huggingface
+         print(f'trying to download model from huggingface...')
+         from huggingface_hub import hf_hub_download
+-        ckpt_path = hf_hub_download(repo_id="tencent/Hunyuan3D-Part", filename="p3sam/p3sam.safetensors", local_dir=os.path.join(os.path.expanduser('~'), '/.cache/p3sam/weights'))
++        ckpt_path = hf_hub_download(repo_id="tencent/Hunyuan3D-Part", filename="p3sam/p3sam.safetensors", local_dir=os.path.join(os.path.expanduser('~'), '.cache/p3sam/weights'))
+         print(f'download model from huggingface to: {ckpt_path}')
+         from safetensors.torch import load_file
+         state_dict = load_file(ckpt_path)
+diff --git a/P3-SAM/pyproject.toml b/P3-SAM/pyproject.toml
+new file mode 100644
+index 0000000..4a3a7ac
+--- /dev/null
++++ b/P3-SAM/pyproject.toml
+@@ -0,0 +1,82 @@
++[build-system]
++requires = ["setuptools>=45", "wheel", "setuptools_scm>=6.2"]
++build-backend = "setuptools.build_meta"
++
++[project]
++name = "p3sam"
++version = "1.0.0"
++description = "P3-SAM: Native 3D Part Segmentation"
++readme = "README.md"
++requires-python = ">=3.9"
++license = {text = "Apache-2.0"}
++authors = [
++    {name = "Changfeng Ma"},
++    {name = "Yang Li"},
++    {name = "Xinhao Yan"},
++]
++keywords = ["3D", "segmentation", "deep-learning", "point-cloud", "mesh"]
++classifiers = [
++    "Development Status :: 4 - Beta",
++    "Intended Audience :: Developers",
++    "Intended Audience :: Science/Research",
++    "Topic :: Scientific/Engineering :: Artificial Intelligence",
++    "Topic :: Scientific/Engineering :: Image Recognition",
++    "License :: OSI Approved :: Apache Software License",
++    "Programming Language :: Python :: 3",
++    "Programming Language :: Python :: 3.10",
++    "Programming Language :: Python :: 3.11",
++]
++
++dependencies = [
++    "torch>=2.0.0",
++    "numpy>=1.21.0",
++    "trimesh>=3.9.0",
++    "scikit-learn>=1.0.0",
++    "fpsample>=0.1.0",
++    "tqdm>=4.60.0",
++    "numba>=0.55.0",
++    "safetensors>=0.3.0",
++    "Pillow>=9.0.0",
++    "addict",
++    "google-genai",
++    "vertexai"
++]
++
++[project.optional-dependencies]
++dev = [
++    "pytest>=7.0.0",
++    "black>=22.0.0",
++    "flake8>=4.0.0",
++]
++demo = [
++    "viser>=0.1.0",
++    "gradio>=3.0.0",
++]
++
++[project.urls]
++Homepage = "https://murcherful.github.io/P3-SAM/"
++Repository = "https://github.com/tencent/Hunyuan3D-Part"
++Documentation = "https://murcherful.github.io/P3-SAM/"
++
++[project.scripts]
++p3sam-auto-mask = "demo.auto_mask:main"
++p3sam-app = "demo.app:main"
++
++[tool.setuptools]
++# Map the P3-SAM directory to p3sam package
++package-dir = {"p3sam" = "."}
++packages = ["p3sam", "p3sam.demo", "p3sam.utils"]
++include-package-data = true
++
++[tool.setuptools.package-data]
++"*" = ["*.md", "*.txt", "*.yaml", "*.json"]
++
++[tool.black]
++line-length = 100
++target-version = ['py310']
++include = '\.pyi?$'
++
++[tool.pytest.ini_options]
++testpaths = ["tests"]
++python_files = ["test_*.py"]
++
+diff --git a/P3-SAM/setup.py b/P3-SAM/setup.py
+new file mode 100644
+index 0000000..f3bcf32
+--- /dev/null
++++ b/P3-SAM/setup.py
+@@ -0,0 +1,72 @@
++#!/usr/bin/env python
++"""
++P3-SAM: Native 3D Part Segmentation
++Setup script for package installation
++"""
++
++from setuptools import setup, find_packages
++from pathlib import Path
++
++# Read README for long description
++readme_file = Path(__file__).parent / "README.md"
++long_description = readme_file.read_text(encoding="utf-8") if readme_file.exists() else ""
++
++setup(
++    name="p3sam",
++    version="1.0.0",
++    author="Changfeng Ma, Yang Li, Xinhao Yan, et al.",
++    author_email="",
++    description="P3-SAM: Native 3D Part Segmentation",
++    long_description=long_description,
++    long_description_content_type="text/markdown",
++    url="https://github.com/tencent/Hunyuan3D-Part",
++    # Map P3-SAM directory to p3sam package
++    package_dir={"p3sam": "."},
++    packages=["p3sam", "p3sam.demo", "p3sam.utils"],
++    python_requires=">=3.9",
++    install_requires=[
++        "torch>=2.0.0",
++        "numpy>=1.21.0",
++        "trimesh>=3.9.0",
++        "scikit-learn>=1.0.0",
++        "fpsample>=0.1.0",
++        "tqdm>=4.60.0",
++        "numba>=0.55.0",
++        "safetensors>=0.3.0",
++        "Pillow>=9.0.0",
++    ],
++    extras_require={
++        "dev": [
++            "pytest>=7.0.0",
++            "black>=22.0.0",
++            "flake8>=4.0.0",
++        ],
++        "demo": [
++            "viser>=0.1.0",
++            "gradio>=3.0.0",
++        ],
++    },
++    classifiers=[
++        "Development Status :: 4 - Beta",
++        "Intended Audience :: Developers",
++        "Intended Audience :: Science/Research",
++        "Topic :: Scientific/Engineering :: Artificial Intelligence",
++        "Topic :: Scientific/Engineering :: Image Recognition",
++        "License :: OSI Approved :: Apache Software License",
++        "Programming Language :: Python :: 3",
++        "Programming Language :: Python :: 3.10",
++        "Programming Language :: Python :: 3.11",
++    ],
++    entry_points={
++        "console_scripts": [
++            "p3sam-auto-mask=demo.auto_mask:main",
++            "p3sam-app=demo.app:main",
++        ],
++    },
++    package_data={
++        "": ["*.md", "*.txt", "*.yaml", "*.json"],
++    },
++    include_package_data=True,
++    zip_safe=False,
++)
++
+diff --git a/P3-SAM/utils/__init__.py b/P3-SAM/utils/__init__.py
+new file mode 100644
+index 0000000..4fae437
+--- /dev/null
++++ b/P3-SAM/utils/__init__.py
+@@ -0,0 +1,8 @@
++"""
++P3-SAM Utilities
++
++Contains utility functions and modules for P3-SAM.
++"""
++
++__all__ = []
++
+diff --git a/XPart/.gitignore b/XPart/.gitignore
+index 96a3f20..7959b41 100755
+--- a/XPart/.gitignore
++++ b/XPart/.gitignore
+@@ -2,6 +2,10 @@ data_bp/
+ checkpoints/
+ data_sample/
+ checkpoints/
++*.pth
++*.safetensors
++*.ckpt
++*.pt
+ debug/
+ output_folder/
+ output_exp/
+diff --git a/XPart/partgen/bbox_estimator/auto_mask_api.py b/XPart/partgen/bbox_estimator/auto_mask_api.py
+index bdfe7dd..9bc6c04 100755
+--- a/XPart/partgen/bbox_estimator/auto_mask_api.py
++++ b/XPart/partgen/bbox_estimator/auto_mask_api.py
+@@ -20,12 +20,13 @@ from concurrent.futures import ThreadPoolExecutor
+ from numba import njit
+ 
+ #################################
+-# 修改sonata import路径
++# Modified sonata import path
+ from ..models import sonata
+ 
+ #################################
+ sys.path.append("../P3-SAM")
+ from model import build_P3SAM, load_state_dict
++from safetensors.torch import load_file as load_safetensors
+ 
+ 
+ class YSAM(nn.Module):
+@@ -63,7 +64,7 @@ class YSAM(nn.Module):
+         point_prompt = point_prompt.transpose(0, 1)  # [N, K, 3]
+         feats_seg = torch.cat([feats, points, point_prompt], dim=-1)  # [N, K, 512+3+3]
+ 
+-        # 预测mask stage-1
++        # Predict mask stage-1
+         pred_mask_1 = self.seg_mlp_1(feats_seg).squeeze(-1)  # [N, K]
+         pred_mask_2 = self.seg_mlp_2(feats_seg).squeeze(-1)  # [N, K]
+         pred_mask_3 = self.seg_mlp_3(feats_seg).squeeze(-1)  # [N, K]
+@@ -72,7 +73,7 @@ class YSAM(nn.Module):
+         )  # [N, K, 3]
+ 
+         for _ in range(iter):
+-            # 预测mask stage-2
++            # Predict mask stage-2
+             feats_seg_2 = torch.cat([feats_seg, pred_mask], dim=-1)  # [N, K, 512+3+3+3]
+             feats_seg_global = self.seg_s2_mlp_g(feats_seg_2)  # [N, K, 512]
+             feats_seg_global = torch.max(feats_seg_global, dim=0).values  # [K, 512]
+@@ -194,16 +195,16 @@ def cal_single_iou(m1, m2):
+ 
+ def iou_3d(box1, box2, signle=None):
+     """
+-    计算两个三维边界框的交并比 (IoU)
++    Calculate the Intersection over Union (IoU) of two 3D bounding boxes
+ 
+-    参数:
+-        box1 (list): 第一个边界框的坐标 [x1_min, y1_min, z1_min, x1_max, y1_max, z1_max]
+-        box2 (list): 第二个边界框的坐标 [x2_min, y2_min, z2_min, x2_max, y2_max, z2_max]
++    Parameters:
++        box1 (list): Coordinates of the first bounding box [x1_min, y1_min, z1_min, x1_max, y1_max, z1_max]
++        box2 (list): Coordinates of the second bounding box [x2_min, y2_min, z2_min, x2_max, y2_max, z2_max]
+ 
+-    返回:
+-        float: 交并比 (IoU) 值
++    Returns:
++        float: IoU value
+     """
+-    # 计算交集的坐标
++    # Calculate intersection coordinates
+     intersection_xmin = max(box1[0], box2[0])
+     intersection_ymin = max(box1[1], box2[1])
+     intersection_zmin = max(box1[2], box2[2])
+@@ -211,27 +212,27 @@ def iou_3d(box1, box2, signle=None):
+     intersection_ymax = min(box1[4], box2[4])
+     intersection_zmax = min(box1[5], box2[5])
+ 
+-    # 判断是否有交集
++    # Check if there is an intersection
+     if (
+         intersection_xmin >= intersection_xmax
+         or intersection_ymin >= intersection_ymax
+         or intersection_zmin >= intersection_zmax
+     ):
+-        return 0.0  # 无交集
++        return 0.0  # No intersection
+ 
+-    # 计算交集的体积
++    # Calculate intersection volume
+     intersection_volume = (
+         (intersection_xmax - intersection_xmin)
+         * (intersection_ymax - intersection_ymin)
+         * (intersection_zmax - intersection_zmin)
+     )
+ 
+-    # 计算两个盒子的体积
++    # Calculate volume of both boxes
+     box1_volume = (box1[3] - box1[0]) * (box1[4] - box1[1]) * (box1[5] - box1[2])
+     box2_volume = (box2[3] - box2[0]) * (box2[4] - box2[1]) * (box2[5] - box2[2])
+ 
+     if signle is None:
+-        # 计算并集的体积
++        # Calculate union volume
+         union_volume = box1_volume + box2_volume - intersection_volume
+     elif signle == "1":
+         union_volume = box1_volume
+@@ -240,7 +241,7 @@ def iou_3d(box1, box2, signle=None):
+     else:
+         raise ValueError("signle must be None or 1 or 2")
+ 
+-    # 计算 IoU
++    # Calculate IoU
+     iou = intersection_volume / union_volume if union_volume > 0 else 0.0
+     return iou
+ 
+@@ -265,11 +266,11 @@ def clean_mesh(mesh):
+     """
+     mesh: trimesh.Trimesh
+     """
+-    # 1. 合并接近的顶点
++    # 1. Merge nearby vertices
+     mesh.merge_vertices()
+ 
+-    # 2. 删除重复的顶点
+-    # 3. 删除重复的面片
++    # 2. Remove duplicate vertices
++    # 3. Remove duplicate faces
+     mesh.process(True)
+     return mesh
+ 
+@@ -277,15 +278,15 @@ def clean_mesh(mesh):
+ # @njit
+ def remove_outliers_iqr(data, factor=1.5):
+     """
+-    基于 IQR 去除离群值
+-    :param data: 输入的列表或 NumPy 数组
+-    :param factor: IQR 的倍数（默认 1.5）
+-    :return: 去除离群值后的列表
++    Remove outliers based on IQR
++    :param data: Input list or NumPy array
++    :param factor: IQR multiplier (default 1.5)
++    :return: List with outliers removed
+     """
+     data = np.array(data, dtype=np.float32)
+-    q1 = np.percentile(data, 25)  # 第一四分位数
+-    q3 = np.percentile(data, 75)  # 第三四分位数
+-    iqr = q3 - q1  # 四分位距
++    q1 = np.percentile(data, 25)  # First quartile
++    q3 = np.percentile(data, 75)  # Third quartile
++    iqr = q3 - q1  # Interquartile range
+     lower_bound = q1 - factor * iqr
+     upper_bound = q3 + factor * iqr
+     return data[(data >= lower_bound) & (data <= upper_bound)].tolist()
+@@ -325,7 +326,7 @@ def fix_label(face_ids, adjacent_faces, use_aabb=False, mesh=None, show_info=Fal
+             _part_mask = np.all(_part_mask, axis=1)
+             return i, [min_xyz, max_xyz], _part_mask
+ 
+-        with Timer("计算aabb"):
++        with Timer("Calculate aabb"):
+             aabb = {}
+             unique_ids = np.unique(face_ids)
+             # print(max(unique_ids))
+@@ -351,7 +352,7 @@ def fix_label(face_ids, adjacent_faces, use_aabb=False, mesh=None, show_info=Fal
+             # _points = _vertices[_faces]
+             # aabb_face_mask = cal_aabb_mask(_points, face_ids)
+ 
+-    with Timer("合并mesh"):
++    with Timer("Merge mesh"):
+         loop_cnt = 1
+         changed = True
+         progress = tqdm(disable=not show_info)
+@@ -359,11 +360,11 @@ def fix_label(face_ids, adjacent_faces, use_aabb=False, mesh=None, show_info=Fal
+         faces_max = adjacent_faces.shape[0]
+         while changed and loop_cnt <= 50:
+             changed = False
+-            # 获取无色面片
++            # Get uncolored faces
+             new_no_mask_ids = []
+             for i in no_mask_ids:
+                 # if face_ids[i] < 0:
+-                # 找邻居
++                # Find neighbors
+                 if not (0 <= i < faces_max):
+                     continue
+                 _adj_faces = adjacent_faces[i]
+@@ -388,7 +389,7 @@ def fix_label(face_ids, adjacent_faces, use_aabb=False, mesh=None, show_info=Fal
+             no_mask_ids = new_no_mask_ids
+             # print(loop_cnt)
+             progress.update(1)
+-            # progress.set_description(f"合并mesh循环：{loop_cnt} {np.sum(face_ids < 0)}")
++            # progress.set_description(f"Merge mesh loop: {loop_cnt} {np.sum(face_ids < 0)}")
+             loop_cnt += 1
+     return face_ids
+ 
+@@ -405,7 +406,7 @@ def save_mesh(save_path, mesh, face_ids, color_map):
+     mesh_save.visual.face_colors = face_colors
+     mesh_save.export(save_path)
+     mesh_save.export(save_path.replace(".glb", ".ply"))
+-    # print('保存mesh完成')
++    # print('Mesh save complete')
+ 
+     scene_mesh = trimesh.Scene()
+     scene_mesh.add_geometry(mesh_save)
+@@ -455,25 +456,25 @@ def get_aabb_from_face_ids(mesh, face_ids):
+ 
+ def calculate_face_areas(mesh):
+     """
+-    计算每个三角形面片的面积
+-    :param mesh: trimesh.Trimesh 对象
+-    :return: 面片面积数组 (n_faces,)
++    Calculate the area of each triangular face
++    :param mesh: trimesh.Trimesh object
++    :return: Face area array (n_faces,)
+     """
+     return mesh.area_faces
+-    # # 提取顶点和面片索引
++    # # Extract vertices and face indices
+     # vertices = mesh.vertices
+     # faces = mesh.faces
+ 
+-    # # 获取所有三个顶点的坐标
++    # # Get coordinates of all three vertices
+     # v0 = vertices[faces[:, 0]]
+     # v1 = vertices[faces[:, 1]]
+     # v2 = vertices[faces[:, 2]]
+ 
+-    # # 计算两个边向量
++    # # Calculate two edge vectors
+     # edge1 = v1 - v0
+     # edge2 = v2 - v0
+ 
+-    # # 计算叉积的模长（向量面积的两倍）
++    # # Calculate magnitude of cross product (twice the vector area)
+     # cross_product = np.cross(edge1, edge2)
+     # areas = 0.5 * np.linalg.norm(cross_product, axis=1)
+ 
+@@ -514,38 +515,38 @@ def get_connected_region(face_ids, adjacent_faces, return_face_part_ids=False):
+ 
+ def aabb_distance(box1, box2):
+     """
+-    计算两个轴对齐包围盒（AABB）之间的最近距离。
+-    :param box1: 元组 (min_x, min_y, min_z, max_x, max_y, max_z)
+-    :param box2: 元组 (min_x, min_y, min_z, max_x, max_y, max_z)
+-    :return: 最近距离（浮点数）
++    Calculate the nearest distance between two axis-aligned bounding boxes (AABB).
++    :param box1: Tuple (min_x, min_y, min_z, max_x, max_y, max_z)
++    :param box2: Tuple (min_x, min_y, min_z, max_x, max_y, max_z)
++    :return: Nearest distance (float)
+     """
+-    # 解包坐标
++    # Unpack coordinates
+     min1, max1 = box1
+     min2, max2 = box2
+ 
+-    # 计算各轴上的分离距离
+-    dx = max(0, max2[0] - min1[0], max1[0] - min2[0])  # x轴分离距离
+-    dy = max(0, max2[1] - min1[1], max1[1] - min2[1])  # y轴分离距离
+-    dz = max(0, max2[2] - min1[2], max1[2] - min2[2])  # z轴分离距离
++    # Calculate separation distance on each axis
++    dx = max(0, max2[0] - min1[0], max1[0] - min2[0])  # x-axis separation distance
++    dy = max(0, max2[1] - min1[1], max1[1] - min2[1])  # y-axis separation distance
++    dz = max(0, max2[2] - min1[2], max1[2] - min2[2])  # z-axis separation distance
+ 
+-    # 如果所有轴都重叠，则距离为0
++    # If all axes overlap, distance is 0
+     if dx == 0 and dy == 0 and dz == 0:
+         return 0.0
+ 
+-    # 计算欧几里得距离
++    # Calculate Euclidean distance
+     return np.sqrt(dx**2 + dy**2 + dz**2)
+ 
+ 
+ def aabb_volume(aabb):
+     """
+-    计算轴对齐包围盒（AABB）的体积。
+-    :param aabb: 元组 (min_x, min_y, min_z, max_x, max_y, max_z)
+-    :return: 体积（浮点数）
++    Calculate the volume of an axis-aligned bounding box (AABB).
++    :param aabb: Tuple (min_x, min_y, min_z, max_x, max_y, max_z)
++    :return: Volume (float)
+     """
+-    # 解包坐标
++    # Unpack coordinates
+     min_xyz, max_xyz = aabb
+ 
+-    # 计算体积
++    # Calculate volume
+     dx = max_xyz[0] - min_xyz[0]
+     dy = max_xyz[1] - min_xyz[1]
+     dz = max_xyz[2] - min_xyz[2]
+@@ -604,7 +605,7 @@ def find_neighbor_part(parts, adjacent_faces, parts_aabb=None, parts_ids=None):
+ def do_post_process(
+     face_areas, parts, adjacent_faces, face_ids, threshold=0.95, show_info=False
+ ):
+-    # # 获取邻接面片
++    # # Get adjacent faces
+     # mesh_save = mesh.copy()
+     # face_adjacency = mesh.face_adjacency
+     # adjacent_faces = {}
+@@ -620,13 +621,13 @@ def do_post_process(
+ 
+     unique_ids = np.unique(face_ids)
+     if show_info:
+-        print(f"连通区域数量：{len(parts)}")
+-        print(f"ID数量：{len(unique_ids)}")
++        print(f"Number of connected regions: {len(parts)}")
++        print(f"Number of IDs: {len(unique_ids)}")
+ 
+     # face_areas = calculate_face_areas(mesh)
+     total_area = np.sum(face_areas)
+     if show_info:
+-        print(f"总面积：{total_area}")
++        print(f"Total area: {total_area}")
+     part_areas = []
+     for i, part in enumerate(parts):
+         part_area = np.sum(face_areas[part])
+@@ -654,7 +655,7 @@ def do_post_process(
+                         max_part = j
+                 if max_part != -1:
+                     if show_info:
+-                        print(f"合并mesh：{i} {max_part}")
++                        print(f"Merge mesh: {i} {max_part}")
+                     parts[max_part].extend(part)
+                     parts[i] = []
+                     target_face_id = face_ids[parts[max_part][0]]
+@@ -665,7 +666,7 @@ def do_post_process(
+ 
+ 
+ def do_no_mask_process(parts, face_ids):
+-    # # 获取邻接面片
++    # # Get adjacent faces
+     # mesh_save = mesh.copy()
+     # face_adjacency = mesh.face_adjacency
+     # adjacent_faces = {}
+@@ -714,10 +715,10 @@ def aabb_increase(aabb1, aabb2):
+ def sort_multi_list(multi_list, key=lambda x: x[0], reverse=False):
+     """
+     multi_list: [list1, list2, list3, list4, ...], len(list1)=N, len(list2)=N, len(list3)=N, ...
+-    key: 排序函数，默认按第一个元素排序
+-    reverse: 排序顺序，默认降序
++    key: Sorting function, default sort by first element
++    reverse: Sort order, default descending
+     return:
+-        [list1, list2, list3, list4, ...]: 按同一个顺序排序后的多个list
++        [list1, list2, list3, list4, ...]: Multiple lists sorted in the same order
+     """
+     sorted_list = sorted(zip(*multi_list), key=key, reverse=reverse)
+     return zip(*sorted_list)
+@@ -757,37 +758,37 @@ class Timer:
+ 
+     def __enter__(self):
+         self.start_time = time.time()
+-        return self  # 可以返回 self 以便在 with 块内访问
++        return self  # Can return self for access within with block
+ 
+     def __exit__(self, exc_type, exc_val, exc_tb):
+         self.end_time = time.time()
+         self.elapsed_time = self.end_time - self.start_time
+-        print(f">>>>>>代码{self.name} 运行时间: {self.elapsed_time:.4f} 秒")
++        print(f">>>>>>Code {self.name} execution time: {self.elapsed_time:.4f} seconds")
+ 
+ 
+-###################### NUMBA 加速 ######################
++###################### NUMBA acceleration ######################
+ @njit
+ def build_adjacent_faces_numba(face_adjacency):
+     """
+-    使用 Numba 加速构建邻接面片数组。
+-    :param face_adjacency: (N, 2) numpy 数组，包含邻接面片对。
++    Build adjacent faces array using Numba acceleration.
++    :param face_adjacency: (N, 2) numpy array containing adjacent face pairs.
+     :return:
+-        - adj_list: 一维数组，存储所有邻接面片。
+-        - offsets: 一维数组，记录每个面片的邻接起始位置。
++        - adj_list: 1D array storing all adjacent faces.
++        - offsets: 1D array recording the starting position of adjacency for each face.
+     """
+-    n_faces = np.max(face_adjacency) + 1  # 总面片数
+-    n_edges = face_adjacency.shape[0]  # 总邻接边数
++    n_faces = np.max(face_adjacency) + 1  # Total number of faces
++    n_edges = face_adjacency.shape[0]  # Total number of adjacent edges
+ 
+-    # 第一步：统计每个面片的邻接数量（度数）
++    # Step 1: Count the number of adjacencies (degree) for each face
+     degrees = np.zeros(n_faces, dtype=np.int32)
+     for i in range(n_edges):
+         f1, f2 = face_adjacency[i]
+         degrees[f1] += 1
+         degrees[f2] += 1
+-    max_degree = np.max(degrees)  # 最大度数
++    max_degree = np.max(degrees)  # Maximum degree
+ 
+-    adjacent_faces = np.ones((n_faces, max_degree), dtype=np.int32) * -1  # 邻接面片数组
+-    adjacent_faces_count = np.zeros(n_faces, dtype=np.int32)  # 邻接面片计数器
++    adjacent_faces = np.ones((n_faces, max_degree), dtype=np.int32) * -1  # Adjacent faces array
++    adjacent_faces_count = np.zeros(n_faces, dtype=np.int32)  # Adjacent faces counter
+     for i in range(n_edges):
+         f1, f2 = face_adjacency[i]
+         adjacent_faces[f1, adjacent_faces_count[f1]] = f2
+@@ -797,7 +798,7 @@ def build_adjacent_faces_numba(face_adjacency):
+     return adjacent_faces
+ 
+ 
+-###################### NUMBA 加速 ######################
++###################### NUMBA acceleration ######################
+ 
+ 
+ def mesh_sam(
+@@ -813,30 +814,29 @@ def mesh_sam(
+     clean_mesh_flag=True,
+     seed=42,
+ ):
+-    with Timer("加载mesh"):
++    with Timer("Load mesh"):
+         model, model_parallel = model
+         if clean_mesh_flag:
+             mesh = clean_mesh(mesh)
+         mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces, process=False)
+     if show_info:
+-        print(f"点数：{mesh.vertices.shape[0]} 面片数：{mesh.faces.shape[0]}")
++        print(f"Number of points: {mesh.vertices.shape[0]} Number of faces: {mesh.faces.shape[0]}")
+ 
+-    point_num = 100000
+-    prompt_num = 400
+-    with Timer("获取邻接面片"):
+-        # 获取邻接面片
++  
++    with Timer("Get adjacent faces"):
++        # Get adjacent faces
+         face_adjacency = mesh.face_adjacency
+-    with Timer("处理邻接面片"):
++    with Timer("Process adjacent faces"):
+         # adjacent_faces = defaultdict(list)
+         # for face1, face2 in face_adjacency:
+         #     adjacent_faces[face1].append(face2)
+         #     adjacent_faces[face2].append(face1)
+         # adj_list, offsets = build_adjacent_faces_numba(face_adjacency)
+         adjacent_faces = build_adjacent_faces_numba(face_adjacency)
+-    # with Timer("处理邻接面片2"):
++    # with Timer("Process adjacent faces 2"):
+     #     adjacent_faces = to_adj_dict(adj_list, offsets)
+ 
+-    with Timer("采样点云"):
++    with Timer("Sample point cloud"):
+         _points, face_idx = trimesh.sample.sample_surface(mesh, point_num, seed=seed)
+         _points_org = _points.copy()
+         _points = normalize_pc(_points)
+@@ -844,12 +844,12 @@ def mesh_sam(
+         # _points = _points + np.random.normal(0, 1, size=_points.shape) * 0.01
+         # normals = normals * 0. # debug no normal
+     if show_info:
+-        print(f"点数：{point_num} 面片数：{mesh.faces.shape[0]}")
++        print(f"Number of points: {point_num} Number of faces: {mesh.faces.shape[0]}")
+ 
+-    with Timer("获取特征"):
++    with Timer("Get features"):
+         _feats = get_feat(model, _points, normals)
+     if show_info:
+-        print("预处理特征")
++        print("Preprocessing features")
+ 
+     if save_mid_res:
+         feat_save = _feats.float().detach().cpu().numpy()
+@@ -864,9 +864,9 @@ def mesh_sam(
+         pc_save.export(os.path.join(save_path, "point_pca.glb"))
+         pc_save.export(os.path.join(save_path, "point_pca.ply"))
+         if show_info:
+-            print("PCA获取特征颜色")
++            print("Get feature colors using PCA")
+ 
+-    with Timer("FPS采样提示点"):
++    with Timer("FPS sample prompt points"):
+         fps_idx = fpsample.fps_sampling(_points, prompt_num)
+         _point_prompts = _points[fps_idx]
+     if save_mid_res:
+@@ -877,9 +877,9 @@ def mesh_sam(
+             os.path.join(save_path, "point_prompts_pca.ply")
+         )
+     if show_info:
+-        print("采样完成")
++        print("Sampling complete")
+ 
+-    with Timer("推理"):
++    with Timer("Inference"):
+         bs = 64
+         step_num = prompt_num // bs + 1
+         mask_res = []
+@@ -908,9 +908,9 @@ def mesh_sam(
+                 iou_res.append(pred_iou[j, max_idx[j]])
+     mask_res = np.stack(mask_res, axis=-1)  # [N, K]
+     if show_info:
+-        print("prmopt 推理完成")
++        print("Prompt inference complete")
+ 
+-    with Timer("根据IOU排序"):
++    with Timer("Sort by IOU"):
+         iou_res = np.array(iou_res).tolist()
+         mask_iou = [[mask_res[:, i], iou_res[i]] for i in range(prompt_num)]
+         mask_iou_sorted = sorted(mask_iou, key=lambda x: x[1], reverse=True)
+@@ -946,14 +946,14 @@ def mesh_sam(
+ 
+     # print(clusters)
+     if show_info:
+-        print(f"NMS完成，mask数量：{len(clusters)}")
++        print(f"NMS complete, number of masks: {len(clusters)}")
+ 
+     if save_mid_res:
+         part_mask_save_path = os.path.join(save_path, "part_mask")
+         if os.path.exists(part_mask_save_path):
+             shutil.rmtree(part_mask_save_path)
+         os.makedirs(part_mask_save_path, exist_ok=True)
+-        for i in tqdm(clusters.keys(), desc="保存mask", disable=not show_info):
++        for i in tqdm(clusters.keys(), desc="Save masks", disable=not show_info):
+             cluster_num = len(clusters[i])
+             cluster_iou = iou_sorted[i]
+             cluster_area = np.sum(mask_sorted[i])
+@@ -971,8 +971,8 @@ def mesh_sam(
+                 )
+             )
+ 
+-    # 过滤只有一个mask的cluster
+-    with Timer("过滤只有一个mask的cluster"):
++    # Filter clusters with only one mask
++    with Timer("Filter clusters with only one mask"):
+         filtered_clusters = []
+         other_clusters = []
+         for i in clusters.keys():
+@@ -982,12 +982,12 @@ def mesh_sam(
+                 other_clusters.append(i)
+     if show_info:
+         print(
+-            f"过滤前：{len(clusters)} 个cluster，"
+-            f"过滤后：{len(filtered_clusters)} 个cluster"
++            f"Before filtering: {len(clusters)} clusters, "
++            f"After filtering: {len(filtered_clusters)} clusters"
+         )
+ 
+-    # 再次合并
+-    with Timer("再次合并"):
++    # Merge again
++    with Timer("Merge again"):
+         filtered_clusters_num = len(filtered_clusters)
+         cluster2 = {}
+         is_union = [False] * filtered_clusters_num
+@@ -1011,22 +1011,22 @@ def mesh_sam(
+                     cluster2[cur_cluster].append(tar_cluster)
+                     is_union[j] = True
+     if show_info:
+-        print(f"再次合并，合并数量：{len(cluster2.keys())}")
++        print(f"Merged again, number of merges: {len(cluster2.keys())}")
+ 
+-    with Timer("计算没有mask的点"):
++    with Timer("Calculate points without mask"):
+         no_mask = np.ones(point_num)
+         for i in cluster2:
+             part_mask = mask_sorted[i]
+             no_mask[part_mask] = 0
+     if show_info:
+         print(
+-            f"{np.sum(no_mask == 1)} 个点没有mask,"
+-            f" 占比：{np.sum(no_mask == 1) / point_num:.4f}"
++            f"{np.sum(no_mask == 1)} points without mask,"
++            f" ratio: {np.sum(no_mask == 1) / point_num:.4f}"
+         )
+ 
+-    with Timer("修补遗漏mask"):
+-        # 查询漏掉的mask
+-        for i in tqdm(range(len(mask_sorted)), desc="漏掉mask", disable=not show_info):
++    with Timer("Fix missing masks"):
++        # Query for missing masks
++        for i in tqdm(range(len(mask_sorted)), desc="Missing masks", disable=not show_info):
+             if i in cluster2:
+                 continue
+             part_mask = mask_sorted[i]
+@@ -1052,9 +1052,9 @@ def mesh_sam(
+     # print(cluster2)
+     # print(len(cluster2.keys()))
+     if show_info:
+-        print(f"修补遗漏mask：{len(cluster2.keys())}")
++        print(f"Fixed missing masks: {len(cluster2.keys())}")
+ 
+-    with Timer("计算点云最终mask"):
++    with Timer("Calculate final point cloud mask"):
+         final_mask = list(cluster2.keys())
+         final_mask_area = [int(np.sum(mask_sorted[i])) for i in final_mask]
+         final_mask_area = [
+@@ -1072,10 +1072,10 @@ def mesh_sam(
+     # print(final_mask_sorted)
+     # print(final_mask_area_sorted)
+     if show_info:
+-        print(f"最终mask数量：{len(final_mask_sorted)}")
++        print(f"Final number of masks: {len(final_mask_sorted)}")
+ 
+-    with Timer("点云上色"):
+-        # 生成color map
++    with Timer("Color point cloud"):
++        # Generate color map
+         color_map = {}
+         for i in final_mask_sorted:
+             part_color = np.random.rand(3) * 255
+@@ -1087,7 +1087,7 @@ def mesh_sam(
+             part_mask = mask_sorted[i]
+             result_mask[part_mask] = i
+     if save_mid_res:
+-        # 保存点云结果
++        # Save point cloud results
+         result_colors = np.zeros_like(_colors_pca)
+         for i in final_mask_sorted:
+             part_color = color_map[i]
+@@ -1100,10 +1100,10 @@ def mesh_sam(
+             os.path.join(save_path, "auto_mask_cluster.ply")
+         )
+         if show_info:
+-            print("保存点云完成")
++            print("Point cloud save complete")
+ 
+-    with Timer("投影Mesh并统计label"):
+-        # 保存mesh结果
++    with Timer("Project Mesh and count labels"):
++        # Save mesh results
+         face_seg_res = {}
+         for i in final_mask_sorted:
+             _part_mask = result_mask == i
+@@ -1122,14 +1122,14 @@ def mesh_sam(
+         face_ids = -np.ones(len(mesh.faces), dtype=np.int64) * 2
+         for i in tqdm(face_seg_res, leave=False, disable=True):
+             _seg_ids = np.array(face_seg_res[i])
+-            # 获取最多的seg_id
++            # Get the most common seg_id
+             _max_id = np.argmax(np.bincount(_seg_ids + 2)) - 2
+             face_ids[i] = _max_id
+         face_ids_org = face_ids.copy()
+     if show_info:
+-        print("生成face_ids完成")
++        print("face_ids generation complete")
+ 
+-    # 获取邻接面片
++    # Get adjacent faces
+     # face_adjacency = mesh.face_adjacency
+     # adjacent_faces = {}
+     # for face1, face2 in face_adjacency:
+@@ -1140,13 +1140,13 @@ def mesh_sam(
+     #     adjacent_faces[face1].append(face2)
+     #     adjacent_faces[face2].append(face1)
+ 
+-    with Timer("第一次修复face_ids"):
++    with Timer("First fix of face_ids"):
+         face_ids += 1
+         # face_ids = fix_label(face_ids, adjacent_faces, use_aabb=True, mesh=mesh, show_info=show_info)
+         face_ids = fix_label(face_ids, adjacent_faces, mesh=mesh, show_info=show_info)
+         face_ids -= 1
+     if show_info:
+-        print("修复face_ids完成")
++        print("face_ids fix complete")
+ 
+     color_map[-1] = np.array([255, 0, 0], dtype=np.uint8)
+ 
+@@ -1161,9 +1161,9 @@ def mesh_sam(
+             color_map,
+         )
+         if show_info:
+-            print("保存mesh结果完成")
++            print("Mesh results save complete")
+ 
+-    with Timer("计算连通区域"):
++    with Timer("Calculate connected regions"):
+         face_areas = calculate_face_areas(mesh)
+         mesh_total_area = np.sum(face_areas)
+         parts = get_connected_region(face_ids, adjacent_faces)
+@@ -1171,8 +1171,8 @@ def mesh_sam(
+             np.ones_like(face_ids), adjacent_faces, return_face_part_ids=True
+         )
+     if show_info:
+-        print(f"共{len(parts)}个mesh")
+-    with Timer("排序连通区域"):
++        print(f"Total {len(parts)} meshes")
++    with Timer("Sort connected regions"):
+         parts_cp_idx = []
+         for x in parts:
+             _face_idx = x[0]
+@@ -1185,7 +1185,7 @@ def mesh_sam(
+             [parts, parts_areas, parts_cp_areas], key=lambda x: x[1], reverse=True
+         )
+ 
+-    with Timer("去除面积过小的区域"):
++    with Timer("Remove regions with small area"):
+         filtered_parts = []
+         other_parts = []
+         for i in range(len(parts_sorted)):
+@@ -1197,9 +1197,9 @@ def mesh_sam(
+             else:
+                 other_parts.append(i)
+     if show_info:
+-        print(f"保留{len(filtered_parts)}个mesh, 其他{len(other_parts)}个mesh")
++        print(f"Kept {len(filtered_parts)} meshes, other {len(other_parts)} meshes")
+ 
+-    with Timer("去除面积过小区域的label"):
++    with Timer("Remove labels of small area regions"):
+         face_ids_2 = face_ids.copy()
+         part_num = len(cluster2.keys())
+         for j in other_parts:
+@@ -1207,7 +1207,7 @@ def mesh_sam(
+             for i in parts:
+                 face_ids_2[i] = -1
+ 
+-    with Timer("第二次修复face_ids"):
++    with Timer("Second fix of face_ids"):
+         face_ids_3 = face_ids_2.copy()
+         # face_ids_3 = fix_label(face_ids_3, adjacent_faces, use_aabb=True, mesh=mesh, show_info=show_info)
+         face_ids_3 = fix_label(
+@@ -1222,14 +1222,14 @@ def mesh_sam(
+             color_map,
+         )
+         if show_info:
+-            print("保存mesh结果完成")
++            print("Mesh results save complete")
+ 
+-    with Timer("第二次计算连通区域"):
++    with Timer("Second calculation of connected regions"):
+         parts_2 = get_connected_region(face_ids_3, adjacent_faces)
+         parts_areas_2 = [float(np.sum(face_areas[x])) for x in parts_2]
+         parts_ids_2 = [face_ids_3[x[0]] for x in parts_2]
+ 
+-    with Timer("添加过大的缺失part"):
++    with Timer("Add oversized missing parts"):
+         color_map_2 = copy.deepcopy(color_map)
+         max_id = np.max(parts_ids_2)
+         for i in range(len(parts_2)):
+@@ -1242,18 +1242,18 @@ def mesh_sam(
+                     max_id += 1
+                     color_map_2[max_id] = np.random.rand(3) * 255
+                     if show_info:
+-                        print(f"新增part {max_id}")
++                        print(f"Added new part {max_id}")
+             # else:
+             #     parts_ids_2[i] = -1
+ 
+-    with Timer("赋值新的face_ids"):
++    with Timer("Assign new face_ids"):
+         face_ids_4 = face_ids_3.copy()
+         for i in range(len(parts_2)):
+             _parts = parts_2[i]
+             _parts_id = parts_ids_2[i]
+             for j in _parts:
+                 face_ids_4[j] = _parts_id
+-    with Timer("计算part和label的aabb"):
++    with Timer("Calculate aabb for parts and labels"):
+         ids_aabb = {}
+         unique_ids = np.unique(face_ids_4)
+         for i in unique_ids:
+@@ -1277,11 +1277,11 @@ def mesh_sam(
+             max_xyz = np.max(_points, axis=0)
+             parts_2_aabb.append([min_xyz, max_xyz])
+ 
+-    with Timer("计算part的邻居"):
++    with Timer("Calculate neighbors of parts"):
+         parts_2_neighbor = find_neighbor_part(
+             parts_2, adjacent_faces, parts_2_aabb, parts_ids_2
+         )
+-    with Timer("合并无mask区域"):
++    with Timer("Merge regions without mask"):
+         for i in range(len(parts_2)):
+             _parts = parts_2[i]
+             _ids = parts_ids_2[i]
+@@ -1302,7 +1302,7 @@ def mesh_sam(
+                 if _min_id >= 0:
+                     parts_ids_2[i] = _min_id
+ 
+-    with Timer("再次赋值新的face_ids"):
++    with Timer("Assign new face_ids again"):
+         face_ids_4 = face_ids_3.copy()
+         for i in range(len(parts_2)):
+             _parts = parts_2[i]
+@@ -1338,7 +1338,7 @@ def mesh_sam(
+                 color_map_2,
+             )
+         final_face_ids = face_ids_5
+-    with Timer("计算最后的aabb"):
++    with Timer("Calculate final aabb"):
+         aabb = get_aabb_from_face_ids(mesh, final_face_ids)
+     return aabb, final_face_ids, mesh
+ 
+@@ -1353,11 +1353,11 @@ class AutoMask:
+         post_process=True,
+     ):
+         """
+-        ckpt_path: str, 模型路径
+-        point_num: int, 采样点数量
+-        prompt_num: int, 提示数量
+-        threshold: float, 阈值
+-        post_process: bool, 是否后处理
++        ckpt_path: str, Model path
++        point_num: int, Number of sample points
++        prompt_num: int, Number of prompts
++        threshold: float, Threshold
++        post_process: bool, Whether to post-process
+         """
+         self.model = YSAM()
+         self.model.load_state_dict(ckpt_path)
+@@ -1385,14 +1385,14 @@ class AutoMask:
+     ):
+         """
+         Parameters:
+-            mesh: trimesh.Trimesh, 输入网格
+-            point_num: int, 采样点数量
+-            prompt_num: int, 提示数量
+-            threshold: float, 阈值
+-            post_process: bool, 是否后处理
++            mesh: trimesh.Trimesh, Input mesh
++            point_num: int, Number of sample points
++            prompt_num: int, Number of prompts
++            threshold: float, Threshold
++            post_process: bool, Whether to post-process
+         Returns:
+-            aabb: np.ndarray, 包围盒
+-            face_ids: np.ndarray, 面id
++            aabb: np.ndarray, Bounding box
++            face_ids: np.ndarray, Face IDs
+         """
+         point_num = point_num if point_num is not None else self.point_num
+         prompt_num = prompt_num if prompt_num is not None else self.prompt_num
+diff --git a/XPart/partgen/config/infer.yaml b/XPart/partgen/config/infer.yaml
+index e93b0d5..03ed3ac 100755
+--- a/XPart/partgen/config/infer.yaml
++++ b/XPart/partgen/config/infer.yaml
+@@ -27,7 +27,8 @@ bbox_predictor:
+   target: partgen.bbox_estimator.auto_mask_api.AutoMask
+   params:
+     ckpt_path: checkpoints/p3sam.ckpt
+-
++    point_num: 25000
++    prompt_num: 500
+ conditioner:
+   target: partgen.models.conditioner.condioner_release.Conditioner
+   params:
+diff --git a/XPart/partgen/config/infer_original.yaml b/XPart/partgen/config/infer_original.yaml
+new file mode 100755
+index 0000000..f553e7f
+--- /dev/null
++++ b/XPart/partgen/config/infer_original.yaml
+@@ -0,0 +1,122 @@
++name: "Xpart Pipeline release"
++
++ckpt_path: checkpoints/xpart.pt
++
++shapevae:
++  target: partgen.models.autoencoders.VolumeDecoderShapeVAE
++  params:
++    num_latents: &num_latents 1024
++    embed_dim: 64
++    num_freqs: 8
++    include_pi: false
++    heads: 16
++    width: 1024
++    num_encoder_layers: 8
++    num_decoder_layers: 16
++    qkv_bias: false
++    qk_norm: true
++    scale_factor: &z_scale_factor 1.0039506158752403
++    geo_decoder_mlp_expand_ratio: 4
++    geo_decoder_downsample_ratio: 1
++    geo_decoder_ln_post: true
++    point_feats: 4
++    pc_size: &pc_size 81920 
++    pc_sharpedge_size: &pc_sharpedge_size 0
++
++bbox_predictor:
++  target: partgen.bbox_estimator.auto_mask_api.AutoMask
++  params:
++    ckpt_path: checkpoints/p3sam.ckpt
++conditioner:
++  target: partgen.models.conditioner.condioner_release.Conditioner
++  params:
++    use_geo: true
++    use_obj: true
++    use_seg_feat: true
++    geo_cfg:
++      target: partgen.models.conditioner.part_encoders.PartEncoder
++      output_dim: &cross2_output_dim 1024
++      params:
++        use_local: true
++        local_feat_type: latents_shape # [latents,miche-point-query-structural-vae]
++        num_tokens_cond: &num_tokens_cond 4096 # num_tokens :2048 for holopart conditioner
++        local_geo_cfg:
++          target: partgen.models.autoencoders.VolumeDecoderShapeVAE
++          params:
++            num_latents: *num_tokens_cond
++            embed_dim: 64
++            num_freqs: 8
++            include_pi: false
++            heads: 16
++            width: 1024
++            num_encoder_layers: 8
++            num_decoder_layers: 16
++            qkv_bias: false
++            qk_norm: true
++            scale_factor: *z_scale_factor
++            geo_decoder_mlp_expand_ratio: 4
++            geo_decoder_downsample_ratio: 1
++            geo_decoder_ln_post: true
++            point_feats: 4
++            pc_size:  &pc_size_bbox 81920 
++            pc_sharpedge_size: &pc_sharpedge_size_bbox 0
++
++    obj_encoder_cfg:
++      target: partgen.models.autoencoders.VolumeDecoderShapeVAE
++      output_dim: &cross1_output_dim 1024
++      params:
++        num_latents: 4096
++        embed_dim: 64
++        num_freqs: 8
++        include_pi: false
++        heads: 16
++        width: 1024
++        num_encoder_layers: 8
++        num_decoder_layers: 16
++        qkv_bias: false
++        qk_norm: true
++        scale_factor: 1.0039506158752403
++        geo_decoder_mlp_expand_ratio: 4
++        geo_decoder_downsample_ratio: 1
++        geo_decoder_ln_post: true
++        point_feats: 4
++        pc_size: *pc_size
++        pc_sharpedge_size: *pc_sharpedge_size
++    seg_feat_cfg:
++      target: partgen.models.conditioner.sonata_extractor.SonataFeatureExtractor
++
++model:
++  target: partgen.models.partformer_dit.PartFormerDITPlain
++  params:
++    use_self_attention: true
++    use_cross_attention: true
++    use_cross_attention_2: true
++    # cond 
++    use_bbox_cond: false
++    num_freqs: 8
++    use_part_embed: true
++    valid_num: 50 #*valid_num
++    # para
++    input_size: *num_latents
++    in_channels: 64
++    hidden_size: 2048
++    encoder_hidden_dim: *cross1_output_dim # for object mesh
++    encoder_hidden2_dim: *cross2_output_dim # for part in bbox
++    depth: 21
++    num_heads: 16
++    qk_norm: true
++    qkv_bias: false
++    qk_norm_type: 'rms'
++    with_decoupled_ca: false
++    decoupled_ca_dim: *num_tokens_cond
++    decoupled_ca_weight: 1.0
++    use_attention_pooling: false
++    use_pos_emb: false
++    num_moe_layers: 6
++    num_experts: 8
++    moe_top_k: 2
++
++scheduler:
++  target: partgen.models.diffusion.schedulers.FlowMatchEulerDiscreteScheduler
++  params:
++    num_train_timesteps: 1000
+\ No newline at end of file
+diff --git a/XPart/partgen/models/sonata/model.py b/XPart/partgen/models/sonata/model.py
+index 9219844..628e88b 100755
+--- a/XPart/partgen/models/sonata/model.py
++++ b/XPart/partgen/models/sonata/model.py
+@@ -855,7 +855,7 @@ def load(
+     if ckpt_only:
+         return ckpt
+ 
+-    # 关闭flash attention
++    # Disable flash attention
+     # ckpt["config"]['enable_flash'] = False
+ 
+     model = PointTransformerV3(**ckpt["config"])
+diff --git a/XPart/partgen/partformer_pipeline.py b/XPart/partgen/partformer_pipeline.py
+index 79c346e..562a779 100755
+--- a/XPart/partgen/partformer_pipeline.py
++++ b/XPart/partgen/partformer_pipeline.py
+@@ -22,6 +22,7 @@ from .utils.misc import (
+     get_config_from_file,
+     smart_load_model,
+ )
++from safetensors.torch import load_file as load_safetensors
+ from easydict import EasyDict
+ 
+ import json
+diff --git a/XPart/partgen/utils/camera_utils.py b/XPart/partgen/utils/camera_utils.py
+new file mode 100644
+index 0000000..8c9b078
+--- /dev/null
++++ b/XPart/partgen/utils/camera_utils.py
+@@ -0,0 +1,183 @@
++import numpy as np
++import torch
++import torch.nn.functional as F
++from typing import Annotated
++
++
++
++
++# TODO: give credit to the source
++def golden_ratio():
++    return (1 + np.sqrt(5)) / 2
++
++
++def tetrahedron():
++    return np.array([
++        [ 1,  1,  1],
++        [-1, -1,  1],
++        [-1,  1, -1],
++        [ 1, -1, -1],
++    ])
++
++
++def octohedron():
++    return np.array([
++        [ 1,  0,  0],
++        [ 0,  0,  1],
++        [-1,  0,  0],
++        [ 0,  0, -1],
++        [ 0,  1,  0],
++        [ 0, -1,  0],
++    ])
++
++
++def cube():
++    return np.array([
++        [ 1,  1,  1],
++        [-1,  1,  1],
++        [-1, -1,  1],
++        [ 1, -1,  1],
++        [ 1,  1, -1],
++        [-1,  1, -1],
++        [-1, -1, -1],
++        [ 1, -1, -1],
++    ])
++
++
++def icosahedron():
++    phi = golden_ratio()
++    return np.array([
++        [-1,  phi,  0],
++        [-1, -phi,  0],
++        [ 1,  phi,  0],
++        [ 1, -phi,  0],
++        [ 0, -1,  phi],
++        [ 0,  1,  phi],
++        [ 0, -1, -phi],
++        [ 0,  1, -phi],
++        [ phi,  0, -1],
++        [ phi,  0,  1],
++        [-phi,  0, -1],
++        [-phi,  0,  1],
++    ]) / np.sqrt(1 + phi ** 2)
++
++
++def dodecahedron():
++    phi = golden_ratio()
++    a, b = 1 / phi, 1 / (phi * phi)
++    return np.array([
++        [-a, -a,  b], [ a, -a,  b], [ a,  a,  b], [-a,  a,  b],
++        [-a, -a, -b], [ a, -a, -b], [ a,  a, -b], [-a,  a, -b],
++        [ b, -a, -a], [ b,  a, -a], [ b,  a,  a], [ b, -a,  a],
++        [-b, -a, -a], [-b,  a, -a], [-b,  a,  a], [-b, -a,  a],
++        [-a,  b, -a], [ a,  b, -a], [ a,  b,  a], [-a,  b,  a],
++    ]) / np.sqrt(a ** 2 + b ** 2)
++
++
++def standard(n=8, elevation=15):
++    """
++    """
++    pphi =  elevation * np.pi / 180
++    nphi = -elevation * np.pi / 180
++    coords = []
++    for phi in [pphi, nphi]:
++        for theta in np.linspace(0, 2 * np.pi, n, endpoint=False):
++            coords.append([
++                np.cos(theta) * np.cos(phi),
++                np.sin(phi),
++                np.sin(theta) * np.cos(phi),
++            ])
++    coords.append([0,  0,  1])
++    coords.append([0,  0, -1])
++    return np.array(coords)
++
++
++def swirl(n=120, cycles=1, elevation_range=(-45, 60)):
++    """
++    """
++    pphi = elevation_range[0] * np.pi / 180
++    nphi = elevation_range[1] * np.pi / 180
++    thetas = np.linspace(0, 2 * np.pi, n, endpoint=False)
++    coords = []
++    for i, phi in enumerate(np.linspace(pphi, nphi, n)):
++        coords.append([
++            np.cos(cycles * thetas[i]) * np.cos(phi),
++            np.sin(phi),
++            np.sin(cycles * thetas[i]) * np.cos(phi),
++        ])
++    return np.array(coords)
++
++
++
++HomogeneousTransform = Annotated[
++    np.ndarray | torch.Tensor,
++    "Shape: (..., 4, 4) - batch dimensions followed by 4x4 homogeneous transformation matrix"
++]
++
++
++def matrix3x4_to_4x4(matrix3x4: HomogeneousTransform) -> HomogeneousTransform:
++    """
++    Convert a 3x4 transformation matrix to a 4x4 transformation matrix.
++    """
++    bottom = torch.zeros_like(matrix3x4[:, 0, :].unsqueeze(-2))
++    bottom[..., -1] = 1
++    return torch.cat([matrix3x4, bottom], dim=-2)
++
++
++def view_matrix(
++    camera_position: torch.Tensor,
++    lookat_position: torch.Tensor = torch.tensor([0, 0, 0]),
++    up             : torch.Tensor      = torch.tensor([0, 1, 0]),
++) -> HomogeneousTransform:
++    """
++    Given lookat position, camera position, and up vector, compute cam2world poses.
++    """
++    if camera_position.ndim == 1:
++        camera_position = camera_position.unsqueeze(0)
++    if lookat_position.ndim == 1:
++        lookat_position = lookat_position.unsqueeze(0)
++    camera_position = camera_position.float()
++    lookat_position = lookat_position.float()
++
++    cam_u = up.unsqueeze(0).repeat(len(lookat_position), 1).float().to(camera_position.device)
++
++    # handle degenerate cases
++    crossp = torch.abs(torch.cross(lookat_position - camera_position, cam_u, dim=-1)).max(dim=-1).values
++    camera_position[crossp < 1e-6] += 1e-6
++
++    cam_z = F.normalize((lookat_position - camera_position), dim=-1)
++    cam_x = F.normalize(torch.cross(cam_z, cam_u, dim=-1), dim=-1)
++    cam_y = F.normalize(torch.cross(cam_x, cam_z, dim=-1), dim=-1)
++    poses = torch.stack([cam_x, cam_y, -cam_z, camera_position], dim=-1) # same as nerfstudio convention [right, up, -lookat]
++    poses = matrix3x4_to_4x4(poses)
++    return poses
++
++
++def sample_view_matrices(n: int, radius: float, lookat_position: torch.Tensor=torch.tensor([0, 0, 0])) -> HomogeneousTransform:
++    """
++    Sample n uniformly distributed view matrices spherically with given radius.
++    """
++    tht = torch.rand(n) * torch.pi * 2
++    phi = torch.rand(n) * torch.pi
++    world_x = radius * torch.sin(phi) * torch.cos(tht)
++    world_y = radius * torch.sin(phi) * torch.sin(tht)
++    world_z = radius * torch.cos(phi)
++    camera_position = torch.stack([world_x, world_y, world_z], dim=-1)
++    lookat_position = lookat_position.unsqueeze(0).repeat(n, 1)
++    return view_matrix(
++        camera_position.to(lookat_position.device),
++        lookat_position,
++        up=torch.tensor([0, 1, 0], device=lookat_position.device)
++    )
++
++
++def sample_view_matrices_polyhedra(polygon: str, radius: float, lookat_position: torch.Tensor=torch.tensor([0, 0, 0]), **kwargs) -> HomogeneousTransform:
++    """
++    Sample view matrices according to a polygon with given radius.
++    """
++    camera_position = torch.from_numpy(eval(polygon)(**kwargs)) * radius
++    return view_matrix(
++        camera_position.to(lookat_position.device) + lookat_position,
++        lookat_position,
++        up=torch.tensor([0, 1, 0], device=lookat_position.device)
++    )
+\ No newline at end of file
+diff --git a/XPart/partgen/utils/mesh_utils.py b/XPart/partgen/utils/mesh_utils.py
+index 315f122..b476bdd 100755
+--- a/XPart/partgen/utils/mesh_utils.py
++++ b/XPart/partgen/utils/mesh_utils.py
+@@ -289,7 +289,7 @@ def sample_surface_inbbox(
+     return surface, torch.tensor(valid_index)
+ 
+ 
+-def explode_mesh(mesh, explosion_scale=0.4):
++def explode_mesh(mesh, explosion_scale=0.4, verbose=False):
+ 
+     if isinstance(mesh, trimesh.Scene):
+         scene = mesh
+@@ -305,8 +305,9 @@ def explode_mesh(mesh, explosion_scale=0.4):
+         print("Only one geometry found - nothing to explode")
+         return scene
+ 
+-    print(f"[EXPLODE_MESH] Starting mesh explosion with scale {explosion_scale}")
+-    print(f"[EXPLODE_MESH] Processing {len(scene.geometry)} parts")
++    if verbose:
++        print(f"[EXPLODE_MESH] Starting mesh explosion with scale {explosion_scale}")
++        print(f"[EXPLODE_MESH] Processing {len(scene.geometry)} parts")
+ 
+     exploded_scene = trimesh.Scene()
+ 
+@@ -322,7 +323,8 @@ def explode_mesh(mesh, explosion_scale=0.4):
+             center = np.mean(vertices_global, axis=0)
+             part_centers.append(center)
+             geometry_names.append(geometry_name)
+-            print(f"[EXPLODE_MESH] Part {geometry_name}: center = {center}")
++            if verbose:
++                print(f"[EXPLODE_MESH] Part {geometry_name}: center = {center}")
+ 
+     if not part_centers:
+         print("No valid geometries with vertices found")
+@@ -331,7 +333,8 @@ def explode_mesh(mesh, explosion_scale=0.4):
+     part_centers = np.array(part_centers)
+     global_center = np.mean(part_centers, axis=0)
+ 
+-    print(f"[EXPLODE_MESH] Global center: {global_center}")
++    if verbose:
++        print(f"[EXPLODE_MESH] Global center: {global_center}")
+ 
+     for i, (geometry_name, geometry) in enumerate(scene.geometry.items()):
+         if hasattr(geometry, "vertices"):
+@@ -359,12 +362,14 @@ def explode_mesh(mesh, explosion_scale=0.4):
+                 geometry, transform=new_transform, geom_name=geometry_name
+             )
+ 
+-            print(
++            if verbose:
++                print(
+                 f"[EXPLODE_MESH] Part {geometry_name}: moved by"
+                 f" {np.linalg.norm(offset):.4f}"
+             )
+ 
+-    print("[EXPLODE_MESH] Mesh explosion complete")
++    if verbose:
++        print("[EXPLODE_MESH] Mesh explosion complete")
+     return exploded_scene
+ 
+ 
+@@ -394,78 +399,78 @@ def generate_dense_grid_points(
+ 
+ def extract_near_surface_volume_fn(input_tensor: torch.Tensor, alpha: float):
+     """
+-    修复维度问题的PyTorch实现
++    PyTorch implementation with fixed dimension issues
+     Args:
+         input_tensor: shape [D, D, D], torch.float16
+-        alpha: 标量偏移值
++        alpha: scalar offset value
+     Returns:
+-        mask: shape [D, D, D], torch.int32 表面掩码
++        mask: shape [D, D, D], torch.int32 surface mask
+     """
+     device = input_tensor.device
+     D = input_tensor.shape[0]
+     signed_val = 0.0
+ 
+-    # 添加偏移并处理无效值
++    # Add offset and handle invalid values
+     val = input_tensor + alpha
+-    valid_mask = val > -9000  # 假设-9000是无效值
++    valid_mask = val > -9000  # Assume -9000 is invalid value
+ 
+-    # 改进的邻居获取函数（保持维度一致）
++    # Improved neighbor retrieval function (maintains dimensional consistency)
+     def get_neighbor(t, shift, axis):
+-        """根据指定轴进行位移并保持维度一致"""
++        """Shift along specified axis while maintaining dimensional consistency"""
+         if shift == 0:
+             return t.clone()
+ 
+-        # 确定填充轴（输入为[D, D, D]对应z,y,x轴）
+-        pad_dims = [0, 0, 0, 0, 0, 0]  # 格式：[x前，x后，y前，y后，z前，z后]
++        # Determine padding axis (input [D, D, D] corresponds to z, y, x axes)
++        pad_dims = [0, 0, 0, 0, 0, 0]  # Format: [x_before, x_after, y_before, y_after, z_before, z_after]
+ 
+-        # 根据轴类型设置填充
+-        if axis == 0:  # x轴（最后一个维度）
++        # Set padding based on axis type
++        if axis == 0:  # x-axis (last dimension)
+             pad_idx = 0 if shift > 0 else 1
+             pad_dims[pad_idx] = abs(shift)
+-        elif axis == 1:  # y轴（中间维度）
++        elif axis == 1:  # y-axis (middle dimension)
+             pad_idx = 2 if shift > 0 else 3
+             pad_dims[pad_idx] = abs(shift)
+-        elif axis == 2:  # z轴（第一个维度）
++        elif axis == 2:  # z-axis (first dimension)
+             pad_idx = 4 if shift > 0 else 5
+             pad_dims[pad_idx] = abs(shift)
+ 
+-        # 执行填充（添加batch和channel维度适配F.pad）
++        # Execute padding (add batch and channel dimensions to adapt to F.pad)
+         padded = F.pad(
+             t.unsqueeze(0).unsqueeze(0), pad_dims[::-1], mode="replicate"
+-        )  # 反转顺序适配F.pad
++        )  # Reverse order to adapt to F.pad
+ 
+-        # 构建动态切片索引
+-        slice_dims = [slice(None)] * 3  # 初始化为全切片
+-        if axis == 0:  # x轴（dim=2）
++        # Build dynamic slice indices
++        slice_dims = [slice(None)] * 3  # Initialize to full slices
++        if axis == 0:  # x-axis (dim=2)
+             if shift > 0:
+                 slice_dims[0] = slice(shift, None)
+             else:
+                 slice_dims[0] = slice(None, shift)
+-        elif axis == 1:  # y轴（dim=1）
++        elif axis == 1:  # y-axis (dim=1)
+             if shift > 0:
+                 slice_dims[1] = slice(shift, None)
+             else:
+                 slice_dims[1] = slice(None, shift)
+-        elif axis == 2:  # z轴（dim=0）
++        elif axis == 2:  # z-axis (dim=0)
+             if shift > 0:
+                 slice_dims[2] = slice(shift, None)
+             else:
+                 slice_dims[2] = slice(None, shift)
+ 
+-        # 应用切片并恢复维度
++        # Apply slice and restore dimensions
+         padded = padded.squeeze(0).squeeze(0)
+         sliced = padded[slice_dims]
+         return sliced
+ 
+-    # 获取各方向邻居（确保维度一致）
+-    left = get_neighbor(val, 1, axis=0)  # x方向
++    # Get neighbors in all directions (ensure dimensional consistency)
++    left = get_neighbor(val, 1, axis=0)  # x direction
+     right = get_neighbor(val, -1, axis=0)
+-    back = get_neighbor(val, 1, axis=1)  # y方向
++    back = get_neighbor(val, 1, axis=1)  # y direction
+     front = get_neighbor(val, -1, axis=1)
+-    down = get_neighbor(val, 1, axis=2)  # z方向
++    down = get_neighbor(val, 1, axis=2)  # z direction
+     up = get_neighbor(val, -1, axis=2)
+ 
+-    # 处理边界无效值（使用where保持维度一致）
++    # Handle boundary invalid values (use where to maintain dimensional consistency)
+     def safe_where(neighbor):
+         return torch.where(neighbor > -9000, neighbor, val)
+ 
+@@ -476,7 +481,7 @@ def extract_near_surface_volume_fn(input_tensor: torch.Tensor, alpha: float):
+     down = safe_where(down)
+     up = safe_where(up)
+ 
+-    # 计算符号一致性（转换为float32确保精度）
++    # Calculate sign consistency (convert to float32 to ensure precision)
+     sign = torch.sign(val.to(torch.float32))
+     neighbors_sign = torch.stack(
+         [
+@@ -490,10 +495,10 @@ def extract_near_surface_volume_fn(input_tensor: torch.Tensor, alpha: float):
+         dim=0,
+     )
+ 
+-    # 检查所有符号是否一致
++    # Check if all signs are consistent
+     same_sign = torch.all(neighbors_sign == sign, dim=0)
+ 
+-    # 生成最终掩码
++    # Generate final mask
+     mask = (~same_sign).to(torch.int32)
+     return mask * valid_mask.to(torch.int32)
+ 
+@@ -745,10 +750,10 @@ def pymeshlab2trimesh(mesh: pymeshlab.MeshSet):
+     with tempfile.NamedTemporaryFile(suffix=".ply", delete=False) as temp_file:
+         mesh.save_current_mesh(temp_file.name)
+         mesh = trimesh.load(temp_file.name)
+-    # 检查加载的对象类型
++    # Check the type of loaded object
+     if isinstance(mesh, trimesh.Scene):
+         combined_mesh = trimesh.Trimesh()
+-        # 如果是Scene，遍历所有的geometry并合并
++        # If it's a Scene, traverse all geometries and merge them
+         for geom in mesh.geometry.values():
+             combined_mesh = trimesh.util.concatenate([combined_mesh, geom])
+         mesh = combined_mesh
+diff --git a/XPart/partgen/utils/misc.py b/XPart/partgen/utils/misc.py
+index 0fbff0d..23220a9 100755
+--- a/XPart/partgen/utils/misc.py
++++ b/XPart/partgen/utils/misc.py
+@@ -157,13 +157,15 @@ def smart_load_model(
+         try:
+             from huggingface_hub import snapshot_download
+ 
+-            # 只下载指定子目录
++            # Download only the specified subdirectory
+             path = snapshot_download(
+                 repo_id=original_model_path,
++
+                 # allow_patterns=[f"{subfolder}/*"],  # 关键修改：模式匹配子文件夹
+                 local_dir=model_path,
++
+             )
+-            model_path = path  # os.path.join(path, subfolder)  # 保持路径拼接逻辑不变
++            model_path = path  # os.path.join(path, subfolder)  # Keep path concatenation logic unchanged
+         except ImportError:
+             logger.warning(
+                 "You need to install HuggingFace Hub to load models from the hub."

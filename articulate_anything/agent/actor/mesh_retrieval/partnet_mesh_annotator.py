@@ -119,14 +119,15 @@ def combine_meshes(obj_dir):
             link_meshes = []
 
             for visual in link.findall('visual'):
-                origin = visual.find('origin')
-                xyz, rpy = np.zeros(3), np.zeros(3)
-                if 'xyz' in origin.attrib:
-                    xyz = np.array([float(x)
-                                   for x in origin.attrib['xyz'].split()])
-                if 'rpy' in origin.attrib:
-                    rpy = np.array([float(x)
-                                   for x in origin.attrib['rpy'].split()])
+                # origin = visual.find('origin')
+                # TODO: we may have to push this to repo when we publish
+                # xyz, rpy = np.zeros(3), np.zeros(3)
+                # if 'xyz' in origin.attrib:
+                #     xyz = np.array([float(x)
+                #                    for x in origin.attrib['xyz'].split()])
+                # if 'rpy' in origin.attrib:
+                #     rpy = np.array([float(x)
+                #                    for x in origin.attrib['rpy'].split()])
                 for geometry in visual.findall('geometry'):
                     mesh = geometry.find('mesh')
                     mesh_path = mesh.attrib['filename']
@@ -247,7 +248,7 @@ def render_partnet_views(partnet_dir, overwrite=False):
 
         limits = []
         for joint in asset.get_joints():
-            if joint.type in ["revolute", "prismatic"]:
+            if joint.type in ["revolute", "prismatic", "continuous"]:
                 lower, upper = joint.get_limits()[0]
                 limits.append([lower, upper])
 

@@ -1,15 +1,20 @@
-prompt: "chair"
+prompt: "path/to/Projects/articulate-anything/custom_objects/bamboo_cabinet/backup/robot_frontview.png"
 additional_prompt: null
-modality: "text"
-out_dir: "results"
-dataset_dir: "datasets/partnet-mobility-v0/dataset"
+modality: "image"
+out_dir: "results/default_cabinet"
+# dataset_dir: "datasets/partnet-mobility-v0/dataset"
+dataset_dir: "path/to/DATA/workspace/articulate_anything/partnet-mobility-v0-processed/partnet-mobility-v0/dataset"
 api_key: null
-parallel: 1
+gcloud_project: ${oc.env:GCLOUD_PROJECT}
+gcloud_location: us-west1
+n_retries: 3 # number of retries for the LLM agent
+parallel: 4
 max_load_per_gpu: 10
 obj_ids: null
 gpu_id: 0
 cam_view: frontview
-model_name: gemini-1.5-flash-latest
+rotate_urdf: true
+model_name: gemini-2.5-pro
 link_placement_path: null
 gen_config:
   overwrite: false # whether to overwrite the VLM output
@@ -18,11 +23,11 @@ render_part_views: false
 actor_critic:
   actor_only: false
   start_seed: 0
-  num_seeds: 1
+  num_seeds: 2
   start_iter: 0
-  max_iter: 1
+  max_iter: 5
   conservative: true
-  cutoff: 5
+  cutoff: 8
 
 defaults:
   - video_encoding: default
@@ -36,3 +41,18 @@ defaults:
   - in_context: default
   - joint_actor: default
   - joint_critic: default
+
+# Override specific fields from defaults
+joint_actor:
+  mode: image
+  targetted_affordance: false
+  use_cotracker: true
+joint_critic:
+  mode: image
+  use_cotracker: true
+simulator:
+  urdf:
+    rotation_pose:
+      rx: 0
+      ry: 0
+      rz: 0

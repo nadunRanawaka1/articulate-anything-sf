@@ -32,6 +32,7 @@ from typing import Optional
 from articulate_anything.utils.metric import compute_joint_diff
 from articulate_anything.utils.partnet_utils import get_joint_semantic
 from omegaconf import DictConfig, OmegaConf
+import os
 
 JOINT_PREDICTION_GENERAL_SYSTEM_INSTRUCTION = """
 ## General Instructions
@@ -44,7 +45,7 @@ You're only responsible for creating the joint for the object. Particularly, we 
 
 Note that your `partnet_{object_id}` function must begin with the code that we provide you for the object placement. Then you must include this comment
 "# ====================JOINT PREDICTION====================" before you start writing the code for the joint prediction. Please ensure that the code
-runs without any errors. DO NOT MODIFY the link placement code. Make sure to use the same link names as provided in the link placement code. Make sure to include the import statement `from articulate_anything.api.odio_urdf import *`.
+runs without any errors. **DO NOT MODIFY the link placement code** - this includes not commenting out any lines, especially the fixed joints. The joint-making functions (`make_revolute_joint`, `make_prismatic_joint`, `make_continuous_joint`) will automatically overwrite existing fixed joints, so you don't need to remove them. Make sure to use the same link names as provided in the link placement code. Make sure to include the import statement `from articulate_anything.api.odio_urdf import *`.
 
 We have some helper functions that might be useful for you.
 ```python
@@ -80,6 +81,20 @@ We have some helper functions that might be useful for you.
         #     global_lower_point (list): The global coordinates of the lower point.
         #     global_upper_point (list): The global coordinates of the upper point.
         #     force_overwrite (bool): If True, overwrite existing joint.
+
+    def make_continuous_joint(self, child_link_name: str, parent_link_name: str, global_axis: List[float], force_overwrite: bool = True, pivot_point: Optional[List[float]] = None) -> None:
+        # Creates a continuous joint (unlimited rotation) - ideal for wheels, rollers, knobs, dials, etc.
+        # IMPORTANT: If pivot_point is not specified, automatically uses the child's bounding box center,
+        # ensuring the part rotates around its own center (not the parent's origin).
+        # This is the PREFERRED method for knobs/dials that should spin in place.
+
+        # Args:
+        #     child_link_name (str): Name of the child link (e.g., "wheel", "knob").
+        #     parent_link_name (str): Name of the parent link (e.g., "base", "oven_body").
+        #     global_axis (list): The rotation axis in the world frame. For knobs on a panel,
+        #                         this should be perpendicular to the panel surface.
+        #     force_overwrite (bool, optional): If True, overwrite existing joint.
+        #     pivot_point (list, optional): The pivot point in world frame. If None, uses child's center.
 ```
 
 These functions are the class functions of `Robot`. For example, you can call `pred_robot.get_bounding_boxes(...)`. The following function(s) are helper functions
@@ -117,10 +132,12 @@ In that case, you **must** take the feedback into account when rewriting the pre
 
 Important points:
 
+- **CRITICAL: DO NOT comment out or remove the fixed joints from the link placement code.** The `make_revolute_joint`, `make_prismatic_joint`, and `make_continuous_joint` functions have `force_overwrite=True` by default, which automatically replaces the existing fixed joint with the new joint type. If you comment out a fixed joint, the link becomes disconnected from the robot and will cause a crash.
 - Make sure that for revolute joint, lower_angle_deg < upper_angle_deg.
 - If you're given a video or image of the groundtruth object joint, make sure to study the provided input carefully to understand the correct behavior of the object joint.
 - Do not make joints whose direct parent is `base`. For example, `make_revolute_joint("link1", "base",...)` is not a good practice. Instead,
     consider making joints between two non-base links. 
+- **Use `make_continuous_joint` for knobs, dials, wheels, and rollers** - these parts should spin around their own center. `make_continuous_joint` automatically uses the child's bounding box center as the pivot point when none is specified, ensuring the part rotates in place. Do NOT use `make_revolute_joint` with 0-360° limits for these parts, as that requires manually specifying the pivot point.
 - Joint axis order is [x, y, z]:
     - x : forward -- positive x, backward -- negative x
     - y: right -- positive y, left -- negative y
@@ -184,9 +201,9 @@ class JointPredictionActor(Agent):
 
     def _get_code_example(self):
         if self.cfg.joint_actor.targetted_affordance:
-            example = "articulate_anything/examples/joint_examples_targetted.py"
+            example = os.path.join(self.cfg.project_root, "articulate_anything/examples/joint_examples_targetted.py")
         else:
-            example = "articulate_anything/examples/joint_examples_all.py"
+            example = os.path.join(self.cfg.project_root, "articulate_anything/examples/joint_examples_all.py")
 
         example = file_to_string(example)
 
@@ -283,7 +300,7 @@ class JointPredictionActor(Agent):
                            candidate_function_path: Optional[os.PathLike] = None,
                            **kwargs):
         if feedback is not None:
-            return self._make_video_prompt_parts_retry(gt_input, candidate_function_path,
+            return self._make_prompt_parts_retry(gt_input, candidate_function_path,
                                                        feedback, **kwargs)
 
         prompt_parts = []
@@ -303,14 +320,18 @@ class JointPredictionActor(Agent):
 
         return prompt_parts
 
-    def _make_video_prompt_parts_retry(self, gt_video: os.PathLike,
+    def _make_prompt_parts_retry(self, gt_input: os.PathLike,
                                        candidate_function_path: os.PathLike,
                                        feedback: str,
                                        **kwargs):
         # only for video modality
-        assert self.cfg.joint_actor.mode == "video", "Joint pred retry only for video modality"
+        # assert self.cfg.joint_actor.mode == "video", "Joint pred retry only for video modality"
 
-        prompt_parts = self._make_video_prompt_parts(gt_video)
+        if self.cfg.joint_actor.mode == "video":
+            prompt_parts = self._make_video_prompt_parts(gt_input)
+        elif self.cfg.joint_actor.mode == "image":
+            prompt_parts = self._make_image_prompt_parts(gt_input)
+
         prompt_parts += [
             "Previously, you wrote the following function\n"
             + "```python\n"
@@ -327,6 +348,46 @@ class JointPredictionActor(Agent):
         string_to_file(response.text, join_path(
             self.cfg.out_dir, "response.txt"))
         function_definition = extract_code_from_string(response.text)
+        
+        # Enforce original link placement code
+        # VLM sometimes modifies the link placement even when instructed not to.
+        # We find the JOINT PREDICTION marker and only keep code after it,
+        joint_marker = "# ====================JOINT PREDICTION===================="
+        
+        if joint_marker in function_definition:
+            parts = function_definition.split(joint_marker)
+            joint_prediction_code = joint_marker + parts[1]
+            
+            joint_prediction_code = joint_prediction_code.rstrip()
+            if joint_prediction_code.endswith("return pred_robot"):
+                joint_prediction_code = joint_prediction_code[:-len("return pred_robot")].rstrip()
+            
+            # Get the original link placement code
+            link_placement_path = kwargs.get('link_placement_path') or self.cfg.joint_actor.link_placement_path
+            original_link_placement = file_to_string(link_placement_path)
+            
+            # Remove the "return pred_robot" from the original link placement
+            original_lines = original_link_placement.rstrip().split('\n')
+
+            return_line_idx = None
+            for i in range(len(original_lines) - 1, -1, -1):
+                if original_lines[i].strip() == "return pred_robot":
+                    return_line_idx = i
+                    break
+            
+            if return_line_idx is not None:
+                # Remove the return line
+                original_without_return = '\n'.join(original_lines[:return_line_idx])
+                # Combine: original (without return) + joint prediction + return
+                function_definition = (
+                    original_without_return.rstrip() + "\n\n" +
+                    joint_prediction_code + "\n\n" +
+                    "    return pred_robot\n"
+                )
+            else:
+                # No return found, just append
+                function_definition = original_link_placement.rstrip() + "\n\n" + joint_prediction_code
+        
         string_to_file(function_definition, join_path(
             self.cfg.out_dir, self.OUT_RESULT_PATH))
 
@@ -363,7 +424,8 @@ class JointPredictionActor(Agent):
             print("BEFORE FILTER VIDEO", videos)
             if joint_name:
                 videos = [v for v in videos if joint_name in v]
-                print("AFTER FILTER VIDEO", videos)
+            videos = [v for v in videos if self.cfg.cam_view in v]
+            print("AFTER FILTER VIDEO", videos)
             video = videos[0]
             video = join_path(self.cfg.out_dir, video)
         # apply cotracker to the predicted video
@@ -420,7 +482,7 @@ class JointPredictionMultiModalExamples(InContextExampleModel, JointPredictionAc
 
     def get_example_paths(self):
         # paths under `examples_dir/{obj_id}/{joint_id}`
-        pattern = join_path(self.cfg.joint_actor.examples_dir, "*", "*")
+        pattern = join_path(self.cfg.project_root, self.cfg.joint_actor.examples_dir, "*", "*")
         return [path for path in glob.glob(pattern) if os.path.isdir(path)]
 
     def _format_content(self, *args, **kwargs):

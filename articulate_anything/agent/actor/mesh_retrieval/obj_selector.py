@@ -34,7 +34,7 @@ json
     "reasoning": "Explanation of why this image was selected. Why other images were not selected?"
 }
 
-where X is the number of the selected image (0, 1, 2, 3, etc.). 
+where X is the number of the selected image (0, 1, 2, 3, etc.). MAKE SURE YOUR RESPONSE IS FORMATTED AS A JSON BLOCK.
 """
 
 class ObjectSelector(Agent):
@@ -206,13 +206,13 @@ def get_candidate_objs(most_similar_object,
             logging.warning(f"Image not found for object ID {obj_id}")
     return candidate_images, valid_obj_ids
 
-def get_candidate_objs_from_categories(obj_categories, cam_view, input_dir="datasets/partnet-mobility-v0/dataset"):
+def get_candidate_objs_from_categories(obj_categories, cam_view, dataset_dir="datasets/partnet-mobility-v0/dataset"):
     all_candidate_images = []
     all_candidate_obj_ids = []
 
     for obj_category in obj_categories:
         candidate_images, candidate_obj_ids = get_candidate_objs(
-            obj_category, cam_view=cam_view, input_dir=input_dir
+            obj_category, cam_view=cam_view, input_dir=dataset_dir
         )
         all_candidate_images.extend(candidate_images)
         all_candidate_obj_ids.extend(candidate_obj_ids)

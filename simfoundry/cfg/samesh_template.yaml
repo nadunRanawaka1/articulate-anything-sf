@@ -1,0 +1,106 @@
+# Example configuration for processing multiple objects in one scene
+defaults:
+  - _self_
+  - override hydra/hydra_logging: disabled
+  - override hydra/job_logging: custom
+
+# ===== Main cfg =====
+root_dir: ../simfoundry_results
+scene_name: <FILL>  # Top-level directory name
+seed: 0
+visualize: false
+debug: false
+gcloud_project: ${oc.env:GCLOUD_PROJECT}
+vlm_backend: vertex  # VLM calls run on Vertex AI Gemini using gcloud_project
+gcloud_location: global
+rerun_all: false
+verbose: true
+
+# ===== Multi-object configuration =====
+# List of objects to process (Comment out for single-object mode)
+objects:
+    - <FILL>
+
+# ===== Shared step configurations =====
+# These apply to ALL objects (can be overridden per-object if needed)
+
+s1_render:
+  rerun: false
+  convert_to_partnet: true
+  out_dirname: s1_render
+  camera_mode: icosahedron
+  num_views: 12
+  renderer: pyrender   # pyrender (default, light) | blender (needs the blender binary; better textures)
+  resolution: [1920, 1080]
+
+s2_generate_articulation_tree:
+  rerun: false
+  out_dirname: s2_generate_articulation_tree
+  model_name: gemini-2.5-flash # [gemini-2.5-flash, gemini-2.5-pro, gemini-3-pro-preview]
+
+s3_segment_mesh:
+  rerun: false
+  segment_method: samesh # choices: ['samesh', 'hunyuan']
+  out_dirname: s3_segment_mesh
+  camera_mode: icosahedron
+  num_views: 12
+  renderer: pyrender
+  resolution: [1920, 1080]
+
+  # Hierarchical merging to reduce over-segmentation
+  # Set to null to disable, or a number to limit segments
+  max_segments: 15
+  
+  # === TRELLIS Mesh Preprocessing Options ===
+  # TRELLIS produces thin-shell meshes that break SAMesh's Shape Diameter Function.
+  # Choose ONE of these options:
+  #
+  # Option A: make_watertight (RECOMMENDED for SDF-based segmentation)
+  #   Converts thin shell to solid mesh via Marching Cubes on SDF grid.
+  #   This allows using full SAMesh with SDF mode for better segmentation.
+  make_watertight: false
+  watertight_grid_res: 128   # Higher = more detail, slower (128-512)
+  watertight_epsilon: 0.005  # Shell thickness (fraction of bbox)
+  
+  # Option B: repair_mesh (basic trimesh repair - less effective)
+  #   Only fixes normals and fills simple holes. Doesn't add thickness.
+  repair_mesh: false
+
+  # Explosion settings
+  explode: true  # If true, render exploded views
+  explosion_factor: 0.4  # How much to explode (0=none, 1=full distance)
+  num_clusters: 10  # Number of segments for partfield
+
+  # Auto-split top planes (for drawers/cabinets)
+
+  #Hunyuan specific
+  point_num: 50000
+  prompt_num: 400
+  segment_model_path: null
+
+  #Samesh specific
+  # With make_watertight=true, we can use full SDF+normals mode for better segmentation
+  # Use simfoundry_trellis.yaml (normals only) if NOT using make_watertight
+  samesh_config_path: "samesh/simfoundry_basic_no_split.yaml"
+
+s4_merge_mesh_parts:
+  rerun: false
+  out_dirname: s4_merge_mesh_parts
+  model_name: gemini-3-pro-preview
+  interactive_correction: true
+
+s5_articulate:
+  rerun: true
+  out_dirname: s5_articulate
+  rotate_meshes: false
+  auto_raise_offset: true
+  auto_raise_offset_clearance: 0.5
+  articulation_cfg_path: "conf/config_simfoundry.yaml"
+
+# Hydra settings
+hydra:
+  job:
+    chdir: true
+  run:
+    dir: "."
+  output_subdir: null

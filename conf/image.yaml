@@ -1,0 +1,58 @@
+prompt: "chair"
+additional_prompt: null
+modality: "image"
+out_dir: "results"
+# dataset_dir: "datasets/partnet-mobility-v0/dataset"
+dataset_dir: "path/to/DATA/workspace/articulate_anything/partnet-mobility-v0-processed/partnet-mobility-v0/dataset"
+api_key: null
+gcloud_project: ${oc.env:GCLOUD_PROJECT}
+gcloud_location: us-west1
+parallel: 4
+n_retries: 3 # number of retries for the LLM agent`
+max_load_per_gpu: 10
+obj_ids: null
+gpu_id: 0
+cam_view: frontview
+model_name: gemini-2.5-flash
+# model_name: o3
+link_placement_path: null
+gen_config:
+  overwrite: false # whether to overwrite the VLM output
+render_part_views: false
+
+actor_critic:
+  actor_only: true
+  start_seed: 0
+  num_seeds: 1
+  start_iter: 0
+  max_iter: 2
+  conservative: true
+  cutoff: 5
+
+defaults:
+  - video_encoding: default
+  - category_selector: default
+  - obj_selector: default
+  - simulator: default
+  - link_actor: default
+  - link_critic: default
+  - partnet_mesh_retrieval: default
+  - cotracker: default
+  - in_context: default
+  - joint_actor: default
+  - joint_critic: default
+
+
+  # Override specific fields from defaults
+joint_actor:
+  mode: image
+  targetted_affordance: false
+  use_cotracker: true
+joint_critic:
+  mode: image
+  use_cotracker: true
+
+simulator:
+  flip_video: false
+  ray_tracing: false
+  floor_texture: plain

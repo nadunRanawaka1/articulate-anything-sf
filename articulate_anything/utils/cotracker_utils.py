@@ -5,7 +5,7 @@ import cv2
 import os
 import torch
 from cotracker.utils.visualizer import Visualizer, read_video_from_path
-from cotracker.predictor import CoTrackerPredictor
+# from cotracker.predictor import CoTrackerPredictor
 import numpy as np
 from sklearn.cluster import KMeans
 import imageio.v3 as iio
@@ -88,12 +88,13 @@ def temporal_subsample(video, k):
 
 
 class DataAugmentation:
-    def __init__(self, cfg):
+    def __init__(self, cfg, project_root: str):
         self.cfg = cfg
-        if not isinstance(self.cfg.checkpoint_path, str) or not os.path.exists(self.cfg.checkpoint_path):
+        checkpoint_path = os.path.join(project_root, self.cfg.checkpoint_path)
+        if not isinstance(checkpoint_path, str) or not os.path.exists(checkpoint_path):
             raise FileNotFoundError(
-                f"Checkpoint file not found at provided path: {self.cfg.checkpoint_path}")
-        self.model = CoTrackerPredictor(checkpoint=self.cfg.checkpoint_path)
+                f"Checkpoint file not found at provided path: {checkpoint_path}")
+        self.model = CoTrackerPredictor(checkpoint=checkpoint_path, v2=True, window_len=self.cfg.window_len)
         self.model = self.model.to(DEFAULT_DEVICE)
 
     def get_prediction(
@@ -203,13 +204,14 @@ class DataAugmentation:
 
 
 class OnlineDataAugmentation:
-    def __init__(self, cfg):
+    def __init__(self, cfg, project_root: str):
         self.cfg = cfg
-        if not isinstance(self.cfg.checkpoint_path, str) or not os.path.exists(self.cfg.checkpoint_path):
+        checkpoint_path = os.path.join(project_root, self.cfg.checkpoint_path)
+        if not isinstance(checkpoint_path, str) or not os.path.exists(checkpoint_path):
             raise FileNotFoundError(
-                f"Checkpoint file not found at provided path: {self.cfg.checkpoint_path}")
+                f"Checkpoint file not found at provided path: {checkpoint_path}")
         self.model = CoTrackerOnlinePredictor(
-            checkpoint=self.cfg.checkpoint_path)
+            checkpoint=checkpoint_path, v2=True, window_len=self.cfg.window_len)
         self.model = self.model.to(DEFAULT_DEVICE)
 
     def process_step(self, window_frames, is_first_step, grid_size, grid_query_frame):
@@ -358,4 +360,4 @@ def make_cotracker(cfg):
         "offline": DataAugmentation,
         "online": OnlineDataAugmentation,
     }
-    return CoTrackerCls[cfg.cotracker.mode](cfg.cotracker)
+    return CoTrackerCls[cfg.cotracker.mode](cfg.cotracker, cfg.project_root)

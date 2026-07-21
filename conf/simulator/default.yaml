@@ -1,10 +1,31 @@
 name: sapien # (sapien)
+# script_path: "articulate_anything/physics/sapien_simulate.py"
+script_path: "articulate_anything/physics/sapien_simulate_simfoundry.py"
+conda_env: "articulate-anything"
 camera_params:
-  width: 640
-  height: 480
+  width: 1280
+  height: 720
   views:
     frontview:
       cam_pos: [3, 1.5, 2]
+      look_at: [0, 0, 0.8]
+    left_45:
+      cam_pos: [2.5, -2.5, 2]
+      look_at: [0, 0, 0.8]
+    right_45:
+      cam_pos: [2.5, 2.5, 2]
+      look_at: [0, 0, 0.8]
+    backview:
+      cam_pos: [-3, -1.5, 2]
+      look_at: [0, 0, 0.8]
+    below_front:
+      cam_pos: [3.5, 0, 0.01]
+      look_at: [0, 0, 0.8]
+    below_back:
+      cam_pos: [-3.5, 0, 0.01]
+      look_at: [0, 0, 0.8]
+    angle45:
+      cam_pos: [2.5, 2.5, 2.5]
       look_at: [0, 0, 0.8]
 floor_texture: plain # (plain, checkerboard)
 use_segmentation: false
@@ -12,10 +33,12 @@ object_white: true
 ray_tracing: false
 headless: true
 flip_video: false
+show_axes: true  # Show XYZ coordinate axes overlay on renders (helps VLM understand orientation)
+axes_origin: [0, 0, 0]  # Origin point for coordinate axes (auto-set by articulate_simfoundry if auto_camera is enabled)
 simulation_params:
   stationary_or_move: stationary # (stationary, move)
-  num_steps: 50
-  joint_name: "all" # (all, {or specific joint_id})
+  num_steps: 100  # Number of frames (24 fps, so 100 = ~4 seconds)
+  joint_name: "all_simultaneous" # (all, all_simultaneous, {or specific joint_id})
   joint_move_dir: "auto" # (auto, move_up, move_down)
 output:
   dir: null

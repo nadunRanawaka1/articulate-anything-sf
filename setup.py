@@ -1,4 +1,3 @@
-from setuptools import setup
 from setuptools import setup, find_packages
 
 
@@ -12,6 +11,8 @@ INSTALL_REQUIRES = [
     'scikit-learn',
     'opencv-python',
     'sapien==2.2.2',
+    'vertexai',
+    'google-genai',
     'pybullet',
     'numpy==1.26.4',  # pybullet requires numpy<2
     'seaborn',
@@ -28,6 +29,8 @@ INSTALL_REQUIRES = [
     'openai',
     'anthropic',
     'moviepy',
+    'pyrender',
+    'dash'
     # 'gradio @ git+https://github.com/gradio-app/gradio.git@main', ## gradio 5.0-dev has video gallery support
     # see: https://github.com/gradio-app/gradio/pull/9052
 ]

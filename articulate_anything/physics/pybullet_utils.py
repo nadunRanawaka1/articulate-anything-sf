@@ -1,3 +1,4 @@
+from tkinter import BROWSE
 from typing import List, Tuple, Union
 import cv2
 import pybullet as p
@@ -233,19 +234,25 @@ def setup_pybullet(
     with HideOutput():
         robot_id = p.loadURDF(urdf_file)
 
-    raise_distances = []
-    # Raise the robot links above the ground
-    for link_index in range(p.getNumJoints(robot_id)):
-        raise_distance = raise_link_above_ground(robot_id, link_index)
-        raise_distances.append(raise_distance)
-
     raise_distance_file = join_path(
         os.path.dirname(urdf_file), "raise_distances.json")
+    
+    # Only compute and save if the file doesn't already exist
+    # This allows pre-computed values (e.g., rotation-aware) to be preserved
+    if not os.path.exists(raise_distance_file):
+        raise_distances = []
+        # Raise the robot links above the ground
+        for link_index in range(p.getNumJoints(robot_id)):
+            raise_distance = raise_link_above_ground(robot_id, link_index)
+            raise_distances.append(raise_distance)
 
-    save_json(
-        raise_distances,
-        raise_distance_file,
-    )
+        save_json(
+            raise_distances,
+            raise_distance_file,
+        )
+        logging.debug(f"Created raise_distances.json: {raise_distance_file}")
+    else:
+        logging.debug(f"Using existing raise_distances.json: {raise_distance_file}")
 
     if reset_joints:
         manipulatable_joints = get_manipulatable_joints(

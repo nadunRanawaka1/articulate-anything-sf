@@ -1,0 +1,63 @@
+---
+cache: path/to/samesh/outputs/mesh_segmentation_cache
+cache_overwrite: False          # SET TO TRUE to apply new SAM parameters! Set back to False after.
+cache_pre_repartition: True    # Cache face2label after split, before repartition
+output: null
+target_labels: null
+
+sam:
+  sam:
+    checkpoint: path/to/samesh/third_party/segment-anything-2/checkpoints/sam2_hiera_large.pt
+    model_config: sam2_hiera_l.yaml
+    auto: True
+    ground: False
+    engine_config:
+      points_per_side: 8            # REDUCED from 12 (fewer points = fewer masks)
+      crop_n_layers: 0
+      #min_mask_region_area: 1024 # sam2 breaks since it uses C connected components
+      pred_iou_thresh: 0.7          # INCREASED from 0.7 (only high-confidence masks)
+      stability_score_thresh: 0.85  # INCREASED from 0.85 (only very stable masks)
+      stability_score_offset: 1.0
+
+sam_mesh:
+  use_modes: [ 'norms', 'sdf']
+  mode_weights:                     # Integer weight: masks are repeated N times for voting
+    matte: 1
+    sdf: 1
+    norms: 1
+    rgb: 1                          # rgb masks (true color with textures)
+  min_area: 4096                    # Reduced - don't filter out small parts like knobs
+  connections_bin_resolution: 100
+  connections_bin_threshold_percentage: 0.80  # INCREASED: stricter matching = fewer merges (was 0.085)
+  smoothing_threshold_percentage_size: 0.05   # Only remove very small components  
+  smoothing_threshold_percentage_area: 0.05   # Only remove very small components
+  smoothing_iterations: 128
+  skip_split: false                
+  save_post_smooth_viz: true        # Save exploded GLB after smooth, before split (shows communities)
+  save_pre_repartition_viz: true    # Save exploded GLB before repartition
+  final_cleanup_min_faces: 100      # Merge components with < N faces AFTER repartition (0 to disable)
+  repartition_cost: 1
+  repartition_lambda: 8
+  repartition_iterations: 2         # Set to 0 when skip_split=True (graph cut needs split)
+  connections_threshold: 0
+
+  # SIMFOUNDRY values  
+  # repartition_cost: 1
+  # repartition_lambda: 7
+  # repartition_lambda_lb: 1
+  # repartition_lambda_ub: 15
+  # repartition_lambda_tolerance: 1
+  # repartition_iterations: 2
+  # connections_threshold: 0
+
+renderer:
+  target_dim: [3072, 3072]  # Higher resolution for better quality
+  camera_generation_method: dodecahedron #octohedron
+  renderer_args:
+    interpolate_norms: True
+    uv_map: False  # set to true to Use original textures
+  sampling_args: {radius: 2.5}
+  bg_color: [0.95, 0.95, 0.95]  # Light gray background
+  smooth: False  # Enable smooth shading
+  lighting_args: {alpha: 0.3, beta: 0.5, ambient_light: [1.0, 1.0, 1.0]}  # Better lighting balance
+  onscreen: True

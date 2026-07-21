@@ -22,6 +22,7 @@ from articulate_anything.utils.prompt_utils import (
     get_n_examples_from_python_code,
 )
 import json
+import os
 from articulate_anything.agent.actor.mesh_retrieval.partnet_mesh_retrieval import make_links_from_json
 
 LINK_PLACEMENT_INSTRUCTION = \
@@ -122,7 +123,7 @@ Some helpful tips:
 
 - Avoid doing `place_relative_to({some_link}, "base", ...)` as "base" is a special link that does not have a bounding box. In general, stick to
 `add_joint(Joint({name}, Parent("base"), Child({some_link}), type="fixed"))` to attach links to the base.
-- Generally, there might be multiple parts with the same name. The first part is always labeled simply as the `part_name`. Subsequent
+- Generally, there might be multiple parts with the same name. The first part is generally labeled simply as the `part_name`. Subsequent
 parts are labeled as `part_name_2`, `part_name_3` ect.
 - Make sure that you examine the names of links that are given to you to avoid running into syntax error of calling
 non-existent links i.e., the link names in the Python code must match exact to the names under `Robot Link Summary`. Generally, each word in the
@@ -155,10 +156,11 @@ class LinkPlacementActor(Agent):
     def _get_code_example(self):
         if self.cfg.modality == "text":
             # Need to have finer placement because the mesh are all re-centered to the origin
-            example = 'articulate_anything/examples/link_placement_desc_examples.py'
+            example = os.path.join(self.cfg.project_root, 'articulate_anything/examples/link_placement_desc_examples.py')
         else:
             # Use the off-centered meshes from PartNet-Mobility so the placement needs not be so precise
-            example = 'articulate_anything/examples/link_placement_examples.py'
+            example = os.path.join(self.cfg.project_root, 'articulate_anything/examples/link_placement_examples.py')
+
 
         example = file_to_string(example)
 
@@ -219,6 +221,8 @@ class LinkPlacementActor(Agent):
                            gt_image_path=None,
                            link_pred_path=None,
                            feedback_path=None,**kwargs):
+        #TODO: delete
+        # breakpoint()
         if gt_image_path is None and self.cfg.link_actor.mode == "image":
             gt_image_path = join_path(
                 self.cfg.dataset_dir, f"robot_{self.cfg.cam_view}.png")
@@ -295,4 +299,7 @@ class LinkPlacementActor(Agent):
         return link_diff
 
     def load_predicted_rendering(self):
-        return join_path(self.cfg.out_dir, f"robot_{self.cfg.cam_view}.png")
+        if len(self.cfg.simulator.camera_params.views) == 1:
+            return join_path(self.cfg.out_dir, f"robot_{self.cfg.cam_view}.png")
+        else:
+            return [join_path(self.cfg.out_dir, f"robot_{view}.png") for view in self.cfg.simulator.camera_params.views]

@@ -124,10 +124,10 @@ def get_manipulatable_joints(robot):
     joints = robot.get_joints()
     manipulatable_joints = []
     for i, joint in enumerate(joints):
-        if joint.type in ["revolute", "prismatic"]:
+        if joint.type in ["revolute", "prismatic", "continuous"]:
             limits = joint.get_limits()[0]
             if (
-                joint.type == "revolute"
+                joint.type in ["revolute", "continuous"]
                 and limits[0] == -float("inf")
                 and limits[1] == float("inf")
             ):
@@ -185,6 +185,8 @@ def move_joint(cfg: DictConfig, scene, cameras, robot, joint_name, joints_dict, 
                 use_segmentation=cfg.use_segmentation,
                 output_json=cfg.output.seg_json,
                 object_white=cfg.object_white,
+                show_axes=cfg.get('show_axes', False),
+                axes_origin=tuple(cfg.get('axes_origin', [0, 0, 0])),
             )
             video_writers[camera_name].write(bgr_img)
 
@@ -271,6 +273,8 @@ def capture_photo(cfg: DictConfig, scene, robot, cameras: Dict[str, Any]):
             use_segmentation=cfg.use_segmentation,
             output_json=cfg.output.seg_json,
             object_white=cfg.object_white,
+            show_axes=cfg.get('show_axes', False),
+            axes_origin=tuple(cfg.get('axes_origin', [0, 0, 0])),
         )
 
         photo_filename = get_photo_name(cfg, camera_name)

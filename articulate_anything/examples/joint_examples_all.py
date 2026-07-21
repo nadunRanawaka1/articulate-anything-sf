@@ -1,6 +1,50 @@
 from articulate_anything.api.odio_urdf import *
 
 
+def partnet_wheel_example(input_dir, links):
+    """
+    No. masked_links: 3
+    Robot Link Summary:
+    - base
+    - cabinet_body
+    - wheel
+
+    Object: a cabinet with wheels/casters
+    Affordance: wheel can rotate continuously around its axle
+    """
+    pred_robot = Robot(input_dir=input_dir, name="cabinet_with_wheels")
+    pred_robot.add_link(links["base"])
+    pred_robot.add_link(links["cabinet_body"])
+    pred_robot.add_joint(
+        Joint(
+            "base_to_cabinet_body",
+            Parent("base"),
+            Child("cabinet_body"),
+            type="fixed",
+        ),
+    )
+
+    pred_robot.add_link(links["wheel"])
+    pred_robot.place_relative_to(
+        "wheel", "cabinet_body", placement="below", clearance=0.0
+    )
+    # ====================JOINT PREDICTION====================
+    # Wheels need continuous joints (unlimited rotation) around their axle.
+    # The axle direction depends on which way the wheel rolls:
+    # - For a wheel that rolls forward/backward: axle is along Y-axis [0, 1, 0]
+    # - For a wheel that rolls left/right: axle is along X-axis [1, 0, 0]
+    
+    # make_continuous_joint automatically uses the wheel's center as the pivot point,
+    # so the wheel spins in place instead of orbiting around the cabinet.
+    pred_robot.make_continuous_joint(
+        "wheel",
+        "cabinet_body",
+        global_axis=[0, 1, 0],  # axle along Y-axis (wheel rolls forward/backward)
+    )
+
+    return pred_robot
+
+
 def partnet_100248(input_dir, links):
     """
     No. masked_links: 3

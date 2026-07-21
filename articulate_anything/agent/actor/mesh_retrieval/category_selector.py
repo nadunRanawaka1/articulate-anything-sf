@@ -97,7 +97,7 @@ class CategorySelector(Agent):
             )
             affordance = self.object_detector.load_prediction()
             target_object = affordance['object']
-
+ 
         if not os.path.exists("partnet_obj_types.json"):
             obj_types = track_obj_types(rename=True)
             save_json(obj_types, "partnet_obj_types.json")

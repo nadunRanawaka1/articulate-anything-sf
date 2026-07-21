@@ -12,7 +12,7 @@ from articulate_anything.utils.utils import (
     Steps,
 )
 from articulate_anything.agent.actor.link_placement.link_placement import LinkPlacementActor
-from articulate_anything.agent.critic.link_placement.link_critic import LinkCritic
+from articulate_anything.agent.critic.link_placement.link_critic import make_link_critic
 from articulate_anything.preprocess.preprocess_partnet import (
     render_partnet_obj,
     preprocess_partnet_object,
@@ -99,6 +99,10 @@ def actor_function(iteration: int, seed: int, cfg: DictConfig, prompt: str, gpu_
         create_task_config(cfg, join_path(
             "link_placement", f"iter_{iteration}", f"seed_{seed}"))
     )
+    # breakpoint()
+    #TODO: delete
+    if cfg.modality == "image":
+        retry_kwargs["gt_image_path"] = prompt
     link_placement_actor.generate_prediction(
         **cfg.gen_config, **retry_kwargs)
 
@@ -137,11 +141,15 @@ def critic_function(iteration: int, seed: int, cfg: DictConfig, prompt: str, act
     if cfg.modality == "text":
         return {"feedback_score": 10, "feedback_path": None}
 
-    link_critic = LinkCritic(create_task_config(cfg, join_path(
+    link_critic = make_link_critic(cfg)(create_task_config(cfg, join_path(
         "link_critic", f"iter_{iteration}", f"seed_{seed}")))
+    if cfg.modality == "image":
+        gt_image_path = prompt
+    else:
+        gt_image_path = join_path(
+            cfg.dataset_dir, f"robot_{cfg.cam_view}.png")
     link_critic.generate_prediction(
-        gt_image_path=join_path(
-            cfg.dataset_dir, f"robot_{cfg.cam_view}.png"),
+        gt_image_path=gt_image_path,
         **actor_result,
         **cfg.gen_config,
     )
@@ -158,7 +166,7 @@ def critic_function(iteration: int, seed: int, cfg: DictConfig, prompt: str, act
 def post_process_iter(best_result: Dict[str, Any], cfg: DictConfig, steps) -> Dict[str, Any]:
     iteration = best_result["iteration"]
     seed = best_result["seed"]
-    link_critic = LinkCritic(create_task_config(cfg, join_path(
+    link_critic = make_link_critic(cfg)(create_task_config(cfg, join_path(
         "link_critic", f"iter_{iteration}", f"seed_{seed}")))
 
     link_actor = LinkPlacementActor(create_task_config(cfg, join_path(
@@ -174,6 +182,7 @@ def articulate_link(prompt: str, steps: Steps, gpu_id: str, cfg: DictConfig) -> 
     # Pre-processing
     preprocess_result = preprocess(prompt, steps, gpu_id, cfg)
     cfg = preprocess_result["cfg"]
+    
 
     # Actor-Critic loop or single actor run
     if cfg.modality == "text":
@@ -198,5 +207,4 @@ def articulate_link(prompt: str, steps: Steps, gpu_id: str, cfg: DictConfig) -> 
                 e, "link_error", i, s, cfg),
             post_process_iter=post_process_iter,
         )
-
     return steps

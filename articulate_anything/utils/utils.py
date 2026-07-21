@@ -10,8 +10,11 @@ import random
 import logging
 import numpy as np
 import json
+import re
 from omegaconf import DictConfig, OmegaConf
 from copy import deepcopy
+
+IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg']
 
 
 def seed_everything(seed: int, torch_deterministic=False) -> None:
@@ -54,6 +57,16 @@ def string_to_file(string: str, filename: str) -> None:
 def file_to_string(filename: str) -> str:
     with open(filename, 'r') as file:
         return file.read()
+
+def file_to_string_python_prediction(filename: str) -> str:
+    '''
+    Load a python file, remove all comments and return the string.
+    '''
+    with open(filename, 'r') as file:
+        code = file.read()
+    # Remove all comments
+    code = re.sub(r'#.*', '', code)
+    return code
 
 
 def create_task_config(cfg: DictConfig, task_name) -> DictConfig:
@@ -141,6 +154,22 @@ def run_subprocess(command: List[str], env=None) -> None:
 
     except subprocess.CalledProcessError as e:
         logging.error(f"Command failed with error: {e}")
+
+def assert_valid_key(key, valid_keys, name=None):
+    """
+    Helper function that asserts that @key is in dictionary @valid_keys keys. If not, it will raise an error.
+
+    Args:
+        key (any): key to check for in dictionary @dic's keys
+        valid_keys (Iterable): contains keys should be checked with @key
+        name (str or None): if specified, is the name associated with the key that will be printed out if the
+            key is not found. If None, default is "value"
+    """
+    if name is None:
+        name = "value"
+    assert key in valid_keys, "Invalid {} received! Valid options are: {}, got: {}".format(
+        name, valid_keys.keys() if isinstance(valid_keys, dict) else valid_keys, key
+    )
 
 
 class Steps:

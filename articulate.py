@@ -10,7 +10,8 @@ from articulate_anything.mesh_retrieval import mesh_retrieval
 from articulate_link import articulate_link
 from articulate_joint import articulate_joint
 from extract_target_affordance import extract_affordance
-import traceback 
+import traceback
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
 
@@ -158,7 +159,7 @@ class ArticulationPipeline:
         logging.info(f"Pipeline execution completed")
         logging.info(f"Steps executed: {', '.join(self.steps.order)}")
 
-@hydra.main(version_base=None, config_path="conf", config_name="config")
+@hydra.main(version_base=None, config_path="conf", config_name="config_simfoundry")
 def articulate(cfg: DictConfig, progress_callback: Optional[Callable] = None) -> Steps:
     """
     Main articulation function that maintains backward compatibility

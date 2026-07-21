@@ -12,6 +12,101 @@ import os
 import colorsys
 
 
+def draw_axis_overlay(image, camera, origin=(0, 0, 0), axis_length=0.3):
+    """
+    Draw XYZ coordinate axes on the image to help VLM understand 3D orientation.
+    
+    Args:
+        image: BGR image (numpy array)
+        camera: SAPIEN camera object
+        origin: 3D origin point for axes (default: scene origin)
+        axis_length: Length of each axis arrow in world units
+    
+    Returns:
+        Image with axis overlay drawn
+    """
+    # Get camera matrices
+    intrinsic = camera.get_intrinsic_matrix()
+    extrinsic = camera.get_extrinsic_matrix()  # World to camera transform
+    
+    # Define axis endpoints in world coordinates
+    origin = np.array(origin, dtype=np.float32)
+    axes_world = {
+        'X': origin + np.array([axis_length, 0, 0]),
+        'Y': origin + np.array([0, axis_length, 0]),
+        'Z': origin + np.array([0, 0, axis_length]),
+    }
+    
+    # Colors for each axis (BGR format for OpenCV)
+    axis_colors = {
+        'X': (0, 0, 255),    # Red
+        'Y': (0, 255, 0),    # Green  
+        'Z': (255, 0, 0),    # Blue
+    }
+    
+    def project_point(point_3d):
+        """Project a 3D point to 2D image coordinates."""
+        # Convert to homogeneous coordinates
+        point_h = np.append(point_3d, 1.0)
+        
+        # Transform to camera coordinates
+        point_cam = extrinsic @ point_h
+        
+        # Check if point is behind camera
+        if point_cam[2] <= 0:
+            return None
+        
+        # Project to image plane
+        point_2d_h = intrinsic @ point_cam[:3]
+        
+        # Convert from homogeneous
+        x = int(point_2d_h[0] / point_2d_h[2])
+        y = int(point_2d_h[1] / point_2d_h[2])
+        
+        return (x, y)
+    
+    # Project origin
+    origin_2d = project_point(origin)
+    if origin_2d is None:
+        return image  # Origin is behind camera, skip drawing
+    
+    # Make a copy to draw on
+    img_with_axes = image.copy()
+    
+    # Draw each axis
+    for axis_name, endpoint in axes_world.items():
+        endpoint_2d = project_point(endpoint)
+        if endpoint_2d is not None:
+            color = axis_colors[axis_name]
+            
+            # Draw the axis line
+            cv2.arrowedLine(img_with_axes, origin_2d, endpoint_2d, 
+                           color, thickness=3, tipLength=0.3)
+            
+            # Add axis label
+            label_offset = (10, -10) if axis_name != 'Z' else (10, 10)
+            label_pos = (endpoint_2d[0] + label_offset[0], 
+                        endpoint_2d[1] + label_offset[1])
+            cv2.putText(img_with_axes, axis_name, label_pos,
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+    
+    # Add a legend in the corner
+    legend_y = 30
+    cv2.putText(img_with_axes, "Coordinate Axes:", (10, legend_y),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    legend_y += 25
+    cv2.putText(img_with_axes, "X (Red)", (10, legend_y),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+    legend_y += 20
+    cv2.putText(img_with_axes, "Y (Green)", (10, legend_y),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+    legend_y += 20
+    cv2.putText(img_with_axes, "Z (Blue)", (10, legend_y),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+    
+    return img_with_axes
+
+
 def setup_cameras(cfg, scene):
     cameras = {}
     for view_name, view_params in cfg.camera_params.views.items():
@@ -216,14 +311,31 @@ def take_camera_pic(
     use_segmentation=True,
     output_json="seg.json",
     object_white=True,
+    show_axes=False,
+    axes_origin=(0, 0, 0),
 ):
-    """Take a picture from the camera and process it based on the given parameters."""
+    """Take a picture from the camera and process it based on the given parameters.
+    
+    Args:
+        robot: SAPIEN robot/articulation object
+        camera: SAPIEN camera object
+        use_segmentation: Whether to use segmentation coloring
+        output_json: Path to save segmentation color mapping
+        object_white: If True, render object as white on black background
+        show_axes: If True, overlay XYZ coordinate axes on the image
+        axes_origin: 3D origin point for the axes (default: scene origin)
+    """
     camera.take_picture()
     if not use_segmentation:
         # If segmentation is not used, return the regular color image
         rgba = camera.get_float_texture("Color")
         rgba_img = (rgba * 255).clip(0, 255).astype("uint8")
-        return cv2.cvtColor(rgba_img, cv2.COLOR_RGBA2BGR)
+        bgr_img = cv2.cvtColor(rgba_img, cv2.COLOR_RGBA2BGR)
+        
+        if show_axes:
+            bgr_img = draw_axis_overlay(bgr_img, camera, origin=axes_origin)
+        
+        return bgr_img
 
     # Get segmentation data
     label_image, unique_labels = get_segmentation_data(camera)
@@ -247,8 +359,13 @@ def take_camera_pic(
         # Save the color mapping to a JSON file
         save_json(link_color_mapping, output_json)
 
-    # Convert the color image from RGB to BGR (OpenCV format) and return
-    return cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
+    # Convert the color image from RGB to BGR (OpenCV format)
+    bgr_img = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
+    
+    if show_axes:
+        bgr_img = draw_axis_overlay(bgr_img, camera, origin=axes_origin)
+    
+    return bgr_img
 
 
 def save_image(image, filename):

@@ -667,7 +667,7 @@ def compute_joint_pred_result(
     iter_num=None,
     get_max=True,
     reference_results=None,
-    joint_types=["revolute", "prismatic"],
+    joint_types=["revolute", "prismatic", "continuous"],
     use_result_dir=False
 ):
     copy_meta(result_dir, dataset_dir)

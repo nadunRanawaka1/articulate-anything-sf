@@ -40,6 +40,19 @@ from articulate_anything.physics.pybullet_utils import (
 )
 import pybullet as p
 
+# Global context for simulator rotation (used by SIMFOUNDRY workflow)
+_SIMULATOR_ROTATION_CONTEXT = None
+
+def set_simulator_rotation_context(rx: float, ry: float, rz: float):
+    """Set global simulator rotation context for coordinate transformations."""
+    global _SIMULATOR_ROTATION_CONTEXT
+    _SIMULATOR_ROTATION_CONTEXT = {'rx': rx, 'ry': ry, 'rz': rz}
+
+def clear_simulator_rotation_context():
+    """Clear simulator rotation context."""
+    global _SIMULATOR_ROTATION_CONTEXT
+    _SIMULATOR_ROTATION_CONTEXT = None
+
 
 def pybullet_session(func):
     @wraps(func)
@@ -408,9 +421,15 @@ class Robot(NamedElement):
     allowed_elements = ["Joint", "Link", "Material", "Transmission", "Gazebo"]
     allowed_attributes = ["input_dir"]
 
-    def __init__(self, input_dir, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, input_dir, *args: Any, simulator_rotation: Optional[Dict[str, float]] = None, **kwargs: Any) -> None:
         self.input_dir = input_dir
         self._base_joint_added = False
+        # Use provided simulator_rotation or check global context
+        if simulator_rotation is not None:
+            self.simulator_rotation = simulator_rotation
+        else:
+            global _SIMULATOR_ROTATION_CONTEXT
+            self.simulator_rotation = _SIMULATOR_ROTATION_CONTEXT
         super(Robot, self).__init__(*args, **kwargs)
 
     def urdf(self, depth: int = 0) -> str:
@@ -472,7 +491,7 @@ class Robot(NamedElement):
         return {
             name: joint
             for name, joint in self.get_joints().items()
-            if joint.type in ["revolute", "prismatic"]
+            if joint.type in ["revolute", "prismatic", "continuous"]
         }
 
     def add_link(self, link: "Link") -> None:
@@ -839,8 +858,7 @@ class Robot(NamedElement):
             axis, direction = 0, -1
         elif placement == "front_inside":
             # Place front of child at front of parent (child inside)
-            target_position[0] += parent_aabb_max[0] - \
-                child_aabb_max[0] - clearance
+            target_position[0] += parent_aabb_max[0] - child_aabb_max[0] - clearance
             axis, direction = 0, -1
         elif placement == "back":
             # Place front of child at back of parent (child outside)
@@ -953,6 +971,34 @@ class Robot(NamedElement):
         else:
             raise ValueError("Invalid axis. Choose from 'x', 'y', or 'z'.")
 
+    def _transform_from_simulator_frame(self, point_or_axis: np.ndarray) -> np.ndarray:
+        """
+        Transform a point or axis from simulator/view frame to mesh frame.
+        
+        When simulator_rotation is set (e.g., {rx: 1.57, rz: 1.57}), the VLM sees
+        the rotated object and predicts in that frame. This method transforms back
+        to the mesh coordinate frame.
+        
+        Args:
+            point_or_axis: 3D vector in simulator frame
+            
+        Returns:
+            3D vector in mesh frame
+        """
+        if self.simulator_rotation is None:
+            return point_or_axis
+        
+        # Create inverse rotation matrix
+        rotation = R.from_euler('xyz', [
+            self.simulator_rotation.get('rx', 0),
+            self.simulator_rotation.get('ry', 0),
+            self.simulator_rotation.get('rz', 0)
+        ])
+        rotation_inv = rotation.inv()
+        
+        # Transform to mesh frame
+        return rotation_inv.apply(point_or_axis)
+    
     def _apply_rotation_to_origin(
         self, element: "Element", axis: str, angle_degrees: float
     ) -> None:
@@ -996,6 +1042,7 @@ class Robot(NamedElement):
         Returns:
             dict: The prismatic joint parameters.
         """
+        #TODO: look at this to fix the axis direction issue
         global_lower_point = np.array(global_lower_point)
         global_upper_point = np.array(global_upper_point)
 
@@ -1100,8 +1147,8 @@ class Robot(NamedElement):
         Args:
             child_link_name (str): Name of the child link.
             parent_link_name (str): Name of the parent link.
-            global_lower_point (list): The global coordinates of the lower point.
-            global_upper_point (list): The global coordinates of the upper point.
+            global_lower_point (list): The global coordinates of the lower point (in simulator/view frame).
+            global_upper_point (list): The global coordinates of the upper point (in simulator/view frame).
             force_overwrite (bool): If True, overwrite existing joint.
         """
 
@@ -1112,6 +1159,10 @@ class Robot(NamedElement):
         joint = self.get_joint_between(child_link_name, parent_link_name)
         if joint is not None and not force_overwrite:
             return  # Joint already exists
+
+        # Transform points from simulator frame to mesh frame if needed
+        global_lower_point = self._transform_from_simulator_frame(np.array(global_lower_point))
+        global_upper_point = self._transform_from_simulator_frame(np.array(global_upper_point))
 
         parent_state = self.get_link_states([parent_link_name])[
             parent_link_name]
@@ -1157,11 +1208,11 @@ class Robot(NamedElement):
         Args:
             child_link_name (str): Name of the child link.
             parent_link_name (str): Name of the parent link.
-            global_axis (list): The rotation axis of the joint in the world frame.
+            global_axis (list): The rotation axis of the joint in the world frame (in simulator/view frame).
             lower_angle_deg (float): The lower joint angle limit in degrees.
             upper_angle_deg (float): The upper joint angle limit in degrees.
             force_overwrite (bool, optional): If True, overwrite existing joint.
-            pivot_point (list, optional): The pivot point for the rotation in the world frame.
+            pivot_point (list, optional): The pivot point for the rotation in the world frame (in simulator/view frame).
         """
         if parent_link_name == "base":
             self._ensure_base_helper()
@@ -1170,6 +1221,11 @@ class Robot(NamedElement):
         joint = self.get_joint_between(child_link_name, parent_link_name)
         if joint is not None and not force_overwrite:
             return  # Joint already exists
+
+        # Transform axis and pivot from simulator frame to mesh frame if needed
+        global_axis = self._transform_from_simulator_frame(np.array(global_axis))
+        if pivot_point is not None:
+            pivot_point = self._transform_from_simulator_frame(np.array(pivot_point))
 
         parent_state = self.get_link_states([parent_link_name])[
             parent_link_name]
@@ -1219,6 +1275,82 @@ class Robot(NamedElement):
                 Child(child_link_name),
                 type="revolute",
                 *revolute_joint.values(),
+            )
+        )
+
+    def make_continuous_joint(
+        self,
+        child_link_name: str,
+        parent_link_name: str,
+        global_axis: List[float],
+        force_overwrite: bool = True,
+        pivot_point: Optional[List[float]] = None,
+    ) -> None:
+        """
+        Creates or updates a continuous joint between the specified child and parent links.
+        
+        Continuous joints allow unlimited rotation (no angle limits), ideal for wheels,
+        rollers, and other continuously rotating parts.
+        
+        If pivot_point is not specified, the child's bounding box center is used,
+        ensuring the part rotates around its own center (not the parent's origin).
+
+        Args:
+            child_link_name (str): Name of the child link (e.g., "wheel").
+            parent_link_name (str): Name of the parent link (e.g., "base").
+            global_axis (list): The rotation axis in the world/simulator frame.
+                                For a wheel, this is typically the axle direction.
+            force_overwrite (bool, optional): If True, overwrite existing joint.
+            pivot_point (list, optional): The pivot point (rotation center) in world frame.
+                                          If None, uses the child's bounding box center.
+        """
+        if parent_link_name == "base":
+            self._ensure_base_helper()
+            parent_link_name = "base_helper"
+
+        joint = self.get_joint_between(child_link_name, parent_link_name)
+        if joint is not None and not force_overwrite:
+            return  # Joint already exists
+
+        # Transform axis from simulator frame to mesh frame if needed
+        global_axis = self._transform_from_simulator_frame(np.array(global_axis))
+
+        # If no pivot point specified, use the child's bounding box center
+        # This ensures the part rotates around its own center, not the parent's origin
+        if pivot_point is None:
+            child_bbox = self.get_bounding_boxes([child_link_name])[child_link_name]
+            pivot_point = get_bounding_box_center(child_bbox[0], child_bbox[1])
+        else:
+            pivot_point = self._transform_from_simulator_frame(np.array(pivot_point))
+
+        parent_state = self.get_link_states([parent_link_name])[parent_link_name]
+        parent_pos, parent_orientation = np.array(parent_state[0]), parent_state[1]
+
+        local_axis = world_to_local(np.array(global_axis), parent_orientation).tolist()
+        local_pivot_point = world_to_local(
+            np.array(pivot_point), parent_orientation, parent_pos
+        )
+        local_pivot_point = np.array(local_pivot_point)
+
+        continuous_joint = {
+            "axis": Axis(xyz=" ".join(map(str, local_axis))),
+            "origin": Origin(xyz=" ".join(map(str, local_pivot_point.tolist()))),
+        }
+
+        # Translate the link to compensate for the new pivot point
+        if joint is not None:
+            joint_origin = self.get_origin_of_joint(joint.name)
+            joint_origin_xyz = [float(x) for x in joint_origin.xyz.split()]
+            self.translate_link(child_link_name, joint_origin_xyz - local_pivot_point)
+            self.remove_joint(joint.name)
+
+        self.add_joint(
+            Joint(
+                f"{parent_link_name}_to_{child_link_name}",
+                Parent(parent_link_name),
+                Child(child_link_name),
+                type="continuous",
+                *continuous_joint.values(),
             )
         )
 

@@ -1,0 +1,75 @@
+# Example configuration for processing multiple objects in one scene
+defaults:
+  - _self_
+  - override hydra/hydra_logging: disabled
+  - override hydra/job_logging: custom
+
+# ===== Main cfg =====
+root_dir: ../simfoundry_results
+scene_name: <FILL>  # Top-level directory name
+seed: 0
+visualize: false
+debug: false
+gcloud_project: ${oc.env:GCLOUD_PROJECT}
+vlm_backend: vertex  # VLM calls run on Vertex AI Gemini using gcloud_project
+gcloud_location: global
+rerun_all: false
+verbose: true
+
+# ===== Multi-object configuration =====
+# List of objects to process (Comment out for single-object mode)
+objects:
+    - <FILL>
+
+# ===== Shared step configurations =====
+# These apply to ALL objects (can be overridden per-object if needed)
+
+s1_render:
+  rerun: false
+  convert_to_partnet: true
+  out_dirname: s1_render
+  camera_mode: icosahedron
+  num_views: 12
+  renderer: pyrender   # pyrender (default, light) | blender (needs the blender binary; better textures)
+  resolution: [1920, 1080]
+
+s2_generate_articulation_tree:
+  rerun: false
+  out_dirname: s2_generate_articulation_tree
+  model_name: gemini-2.5-flash # [gemini-2.5-flash, gemini-2.5-pro, gemini-3-pro-preview]
+
+s3_segment_mesh:
+  rerun: false
+  segment_method: partfield # choices: ['samesh', 'hunyuan', 'partfield']
+  out_dirname: s3_segment_mesh
+  camera_mode: icosahedron
+  num_views: 12
+  renderer: pyrender
+  resolution: [1920, 1080]
+
+  # Explosion settings (partfield only)
+  explode: true  # If true, only render exploded views
+  explosion_factor: 0.5  # How much to explode (0=none, 1=full distance)
+  num_clusters: 10  # Number of segments for partfield
+
+s4_merge_mesh_parts:
+  rerun: false
+  out_dirname: s4_merge_mesh_parts
+  model_name: gemini-3-pro-preview
+  interactive_correction: true
+
+s5_articulate:
+  rerun: true
+  out_dirname: s5_articulate
+  rotate_meshes: false
+  auto_raise_offset: true
+  auto_raise_offset_clearance: 0.5
+  articulation_cfg_path: "conf/config_simfoundry.yaml"
+
+# Hydra settings
+hydra:
+  job:
+    chdir: true
+  run:
+    dir: "."
+  output_subdir: null

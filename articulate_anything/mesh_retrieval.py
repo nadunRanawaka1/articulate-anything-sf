@@ -82,7 +82,8 @@ def mesh_retrieval_visual(cfg: DictConfig):
     # by using VLM to compare the gt_image and candidate_imgs
     obj_selector = make_obj_selector(cfg)
     candidate_images, candidate_obj_ids = get_candidate_objs_from_categories(obj_categories,
-                                                                             cam_view=cfg.cam_view,)
+                                                                             cam_view=cfg.cam_view,
+                                                                             dataset_dir=cfg.dataset_dir)
     print("candidate_obj_ids", candidate_obj_ids)
     print("CFG.prompt", cfg.prompt)
     gt_image = get_obj_image(cfg.prompt, frame_index=cfg.obj_selector.frame_index)

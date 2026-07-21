@@ -7,7 +7,7 @@ import json
 import logging
 from PIL import Image
 from articulate_anything.agent.agent import Agent
-
+import os
 CRITIC_INSTRUCTION = """
 An affordance of an object is a property or a feature that allows for specific actions or interactions. For example, a drawer might be opened and close.
 We'd like to build a simple model with joints and links to simulate the object and its affordance. We will provide you
@@ -36,7 +36,25 @@ Your response should be concise and to the point. When writing description and i
 and the provided `candidate_function` to debug the issues with the candidate function (if any).
 We will parse your response using `json.loads` so please strictly follow the format.
 """
+CRITIC_INSTRUCTION_CONT_SIMFOUNDRY = """
+A candidate function `partnet_{object_id}` will be provided to you. You are responsible for assessing the realism of this model compared to the groundtruth.
+Pay attention to the relative positioning of diferent object parts (i.e. links).
 
+We have run the candidate code, and render the results in PyBullet. We will give you the groundtruth image and rendered images of the prediction from different views 
+in this order. Please compare the groundtruth image with the rendered images of the prediction and provide feedback on the prediction.
+Your response in this format:
+```json
+{
+"realism_rating": {0-10},
+"description": {justify your rating},
+}
+```
+You must first visually compare the groundtruth image with the rendered images of the prediction. 
+Only when the groundtruth image and the rendered images of the prediction are different, should you look at the `candidate_function` to debug the issues with the prediction.
+Your response should be concise and to the point. When writing description and improvements, pay attention to the predicted iamges compared to the groundtruth
+and the provided `candidate_function` to debug the issues with the candidate function (if any).
+We will parse your response using `json.loads` so please strictly follow the format.
+"""
 
 CRITIC_INSTRUCTION_END = """
 Some helpful tips:
@@ -144,12 +162,12 @@ class LinkCritic(Agent):
         if self.cfg.modality == "text":
             # Need to have finer placement because the mesh are all re-centered to the origin
             example = file_to_string(
-                'articulate_anything/examples/link_placement_desc_examples.py'
+                os.path.join(self.cfg.project_root, 'articulate_anything/examples/link_placement_desc_examples.py')
             )
         else:
             # Use the off-centered meshes from PartNet-Mobility so the placement needs not be so precise
             example = file_to_string(
-                'articulate_anything/examples/link_placement_examples.py')
+                os.path.join(self.cfg.project_root, 'articulate_anything/examples/link_placement_examples.py'))
         system_instruction += (
             "Here are some examples of creating various objects using our API\n"
             + "```\n"
@@ -197,3 +215,61 @@ class LinkCritic(Agent):
         # Save the parsed response to a JSON file
         save_json(parsed_response, join_path(
             self.cfg.out_dir, self.OUT_RESULT_PATH))
+
+class LinkCriticSimfoundry(LinkCritic):
+
+    def _make_system_instruction(self):
+        system_instruction = CRITIC_INSTRUCTION
+        if self.cfg.modality == "text":
+            # Need to have finer placement because the mesh are all re-centered to the origin
+            example = file_to_string(
+                os.path.join(self.cfg.project_root, 'articulate_anything/examples/link_placement_desc_examples.py')
+            )
+        else:
+            # Use the off-centered meshes from PartNet-Mobility so the placement needs not be so precise
+            example = file_to_string(
+                os.path.join(self.cfg.project_root, 'articulate_anything/examples/link_placement_examples.py'))
+        system_instruction += (
+            "Here are some examples of creating various objects using our API\n"
+            + "```\n"
+            + example
+            + "\n```\n"
+        )
+        system_instruction += CRITIC_INSTRUCTION_CONT_SIMFOUNDRY
+        system_instruction += (
+            "Here are some examples of the evaluation of the realism of various objects\n"
+            + CRITIC_EXAMPLES
+            + "\n"
+        )
+        system_instruction += CRITIC_INSTRUCTION_END
+        return system_instruction
+    
+    def _make_prompt_parts(self, link_pred_path, pred_image_path: list[str], gt_image_path,
+                           **kwargs):
+
+        candidate_function = file_to_string(link_pred_path)
+        candidate_function_text = (
+            "The candidate function is:\n"
+            + "```python\n"
+            + candidate_function
+            + "\n```"
+        )
+        gt_img = Image.open(gt_image_path)
+        prompt_parts = [
+            candidate_function_text,
+            "The groundtruth image is\n",
+            gt_img,
+            "The prediction images are\n",
+        ]
+
+        for img_path in pred_image_path:
+            pred_img = Image.open(img_path)
+            prompt_parts += [pred_img]
+        return prompt_parts
+
+def make_link_critic(cfg):
+    LinkCriticCls = {
+        "basic": LinkCritic,
+        "simfoundry": LinkCriticSimfoundry
+    }
+    return LinkCriticCls[cfg.link_critic.type]

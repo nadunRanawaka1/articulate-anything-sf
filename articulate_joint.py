@@ -195,7 +195,7 @@ def actor_function(iteration: int, seed: int, cfg: DictConfig,
 def is_actor_only(cfg):
     # cfg.actor_critic.actor_only is either a boolean or a string "auto"
     # if "auto" then we use critic only if cfg.modality == "video"
-    return cfg.actor_critic.actor_only if isinstance(cfg.actor_critic.actor_only, bool) else cfg.modality != "video"
+    return cfg.actor_critic.actor_only if isinstance(cfg.actor_critic.actor_only, bool) else (cfg.modality != "video" and cfg.joint_critic.type != "simfoundry")
 
 def critic_function(iteration: int, seed: int, cfg: DictConfig, prompt: str, actor_result: Dict[str, Any]) -> Dict[str, Any]:
     if is_actor_only(cfg):
@@ -205,7 +205,7 @@ def critic_function(iteration: int, seed: int, cfg: DictConfig, prompt: str, act
     joint_critic = make_joint_critic(cfg)(create_task_config(cfg, join_path(
         "joint_critic", f"iter_{iteration}", f"seed_{seed}"))
     )
-    joint_critic.generate_prediction(gt_video_path=cfg.prompt,
+    joint_critic.generate_prediction(prompt_path=cfg.prompt,
                                      **actor_result, **cfg.gen_config)
     feedback = joint_critic.load_prediction()
     if cfg.joint_actor.targetted_affordance:
@@ -247,15 +247,7 @@ def articulate_joint(prompt: str, steps: Steps, gpu_id: str, cfg: DictConfig) ->
         # populated by the preprocess function
         "targetted_affordance": cfg.joint_actor.targetted_semantic_part,
     }
-    if cfg.joint_actor.mode != "video":
-        actor_result = actor_function(iteration=0, seed=0,
-                                      cfg=cfg, prompt=prompt,
-                                      gpu_id=gpu_id,
-                                      retry_kwargs=retry_kwargs)
-        best_result = {**actor_result, "iteration": 0,
-                       "seed": 0, "feedback_score": 10}
-        post_process_iter(best_result, cfg, steps)
-    else:
+    if cfg.joint_actor.mode == "video" or cfg.joint_critic.type in ("simfoundry", "simfoundry_video"):
         best_result = actor_critic_loop(
             cfg,
             lambda i, s, r: actor_function(i, s, cfg, prompt, gpu_id, r),
@@ -266,5 +258,13 @@ def articulate_joint(prompt: str, steps: Steps, gpu_id: str, cfg: DictConfig) ->
             retry_kwargs=retry_kwargs,
             post_process_iter=post_process_iter,
         )
+    else:
+        actor_result = actor_function(iteration=0, seed=0,
+                                      cfg=cfg, prompt=prompt,
+                                      gpu_id=gpu_id,
+                                      retry_kwargs=retry_kwargs)
+        best_result = {**actor_result, "iteration": 0,
+                       "seed": 0, "feedback_score": 10}
+        post_process_iter(best_result, cfg, steps)
 
     return steps

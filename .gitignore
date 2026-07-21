@@ -17,3 +17,12 @@ imgui.ini
 *.zip
 *scans
 *.pkl
+*.log
+
+custom_objects/
+simfoundry_results/
+scratchwork.py
+deps/
+
+# Editor workspace files
+*.code-workspace

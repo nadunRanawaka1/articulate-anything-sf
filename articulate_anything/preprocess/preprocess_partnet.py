@@ -39,7 +39,8 @@ def render_object(urdf_file: str, gpu_id: str, simulator_cfg: DictConfig, render
 
     command = config_to_command(
         simulator_cfg,
-        "articulate_anything/physics/sapien_simulate.py",
+        simulator_cfg.script_path,
+        simulator_cfg.conda_env
     )
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
@@ -61,15 +62,19 @@ def render_partnet_obj(obj_id: str, gpu_id: str, cfg: DictConfig, render_mode: s
         urdf_file = get_urdf_file(obj_dir)
 
     simulator_cfg = OmegaConf.create(cfg.simulator)
-    if get_obj_type(obj_id) == "Chair":
-        simulator_cfg.urdf.raise_distance_offset = 0.15
+    # TODO: find a better way to handle this
+    # if get_obj_type(obj_id, cfg.dataset_dir) == "Chair":
+    #     simulator_cfg.urdf.raise_distance_offset = 0.15
 
-    rotate_urdf(urdf_file)
+    if cfg.get("rotate_urdf", True):
+        rotate_urdf(urdf_file)
+    else:
+        shutil.copy2(urdf_file, urdf_file + ".legacy")
     render_object(urdf_file, gpu_id, simulator_cfg, render_mode)
     combine_meshes(obj_dir)
 
 
-def rotate_urdf(urdf_file: str):
+def rotate_urdf(urdf_file: str, rotation_angle: int = 180):
     # first, make copy of the urdf file name urdf_file + ".backup"
     backup_file = urdf_file + ".legacy"
     if not os.path.exists(backup_file):
@@ -78,8 +83,8 @@ def rotate_urdf(urdf_file: str):
         shutil.copy2(urdf_file, backup_file)
         robot = process_urdf(urdf_file)
         joint = robot.get_joint_for_parent("base")
-        angle_degree = 180
-        robot.rotate_joint(joint.name, axis="y", angle_degree=angle_degree)
+        # angle_degree = 180
+        robot.rotate_joint(joint.name, axis="y", angle_degree=rotation_angle)
         string_to_file(str(robot), urdf_file)
 
 

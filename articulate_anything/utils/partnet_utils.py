@@ -53,9 +53,10 @@ def track_obj_types(dataset_dir="datasets/partnet-mobility-v0/dataset",
     return obj_types
 
 
-def get_obj_type(obj_id):
-    if not os.path.exists("obj_types.json"):
-        obj_types = track_obj_types()
+# TODO: this needs to be removed
+def get_obj_type(obj_id, dataset_dir="datasets/partnet-mobility-v0/dataset"):
+    if not os.path.exists(join_path(dataset_dir, "obj_types.json")):
+        obj_types = track_obj_types(dataset_dir)
     obj_types = load_json("obj_types.json")
     for obj_type, ids in obj_types.items():
         if obj_id in ids:

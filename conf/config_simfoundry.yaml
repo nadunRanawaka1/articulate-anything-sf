@@ -1,0 +1,68 @@
+project_root: "path/to/Projects/articulate-anything"
+# prompt: "path/to/Projects/articulate-anything/custom_objects/bamboo_cabinet/backup/robot_frontview.png"
+prompt: "path/to/Projects/articulate-anything/results/default_cabinet/link_placement/iter_1/seed_0/robot_frontview.png"
+additional_prompt: null
+modality: "image"
+out_dir: "results/default_cabinet"
+# dataset_dir: "datasets/partnet-mobility-v0/dataset"
+dataset_dir: "path/to/DATA/workspace/articulate_anything/partnet-mobility-v0-processed/partnet-mobility-v0/dataset"
+api_key: null
+gcloud_project: ${oc.env:GCLOUD_PROJECT}
+gcloud_location: us-west1
+vlm_backend: vertex  # VLM calls run on Vertex AI Gemini using gcloud_project
+n_retries: 3 # number of retries for the LLM agent
+parallel: 4
+max_load_per_gpu: 10
+obj_ids: null
+gpu_id: 0
+cam_view: angle45
+rotate_urdf: true
+# model_name: gemini-2.5-pro
+model_name: gemini-3.1-pro-preview
+# model_name: gemini-2.5-flash
+link_placement_path: null
+gen_config:
+  overwrite: false # whether to overwrite the VLM output
+render_part_views: false
+
+actor_critic:
+  actor_only: false
+  start_seed: 0
+  num_seeds: 2
+  start_iter: 0
+  max_iter: 5
+  conservative: true
+  cutoff: 8
+
+defaults:
+  - video_encoding: default
+  - category_selector: default
+  - obj_selector: default
+  - simulator: default
+  - link_actor: default
+  - link_critic: default
+  - partnet_mesh_retrieval: default
+  - cotracker: default
+  - in_context: default
+  - joint_actor: default
+  - joint_critic: default
+
+# Override specific fields from defaults
+link_critic:
+  type: simfoundry
+joint_actor:
+  mode: image
+  targetted_affordance: false
+  use_cotracker: true
+joint_critic:
+  mode: image
+  use_cotracker: true
+  type: simfoundry_video
+simulator:
+  conda_env: "articulate-anything"
+  urdf:
+    raise_distance_offset: 0.0  # Will be auto-computed if auto_raise_offset=true
+    # rotation_pose:
+    #     rx: 1.57  # 90° around X
+    #     ry: 0
+    #     rz: 1.57  # 90° around Z 

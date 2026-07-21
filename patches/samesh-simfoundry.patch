@@ -1,0 +1,1724 @@
+diff --git a/.gitignore b/.gitignore
+index 7f94b79..5601888 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,5 +1,6 @@
+ checkpoints/
+ outputs/
++results/
+ 
+ # Byte-compiled / optimized / DLL files
+ __pycache__/
+diff --git a/configs/mesh_segmentation.yaml b/configs/mesh_segmentation.yaml
+index f89afa9..986e532 100644
+--- a/configs/mesh_segmentation.yaml
++++ b/configs/mesh_segmentation.yaml
+@@ -1,11 +1,11 @@
+ ---
+-cache: /home/gtangg12/samesh/outputs/mesh_segmentation_cache
++cache: /path/to/Projects/samesh/outputs/mesh_segmentation_cache
+ cache_overwrite: False
+-output: /home/gtangg12/samesh/outputs/mesh_segmentation_output
++output: /path/to/Projects/samesh/outputs/mesh_segmentation_output
+ 
+ sam:
+   sam:
+-    checkpoint: /home/gtangg12/samesh/checkpoints/sam2_hiera_large.pt
++    checkpoint: /path/to/Projects/samesh/third_party/segment-anything-2/checkpoints/sam2_hiera_large.pt
+     model_config: sam2_hiera_l.yaml
+     auto: True
+     ground: False
+@@ -28,11 +28,14 @@ sam_mesh:
+   repartition_cost: 1
+   repartition_lambda: 6
+   repartition_iterations: 1
++  connections_threshold: 0
+ 
+ renderer:
+   target_dim: [1024, 1024]
+   camera_generation_method: icosahedron #octohedron
+   renderer_args:
+     interpolate_norms: True
+-  sampling_args: {radius: 2}
+-  lighting_args: {}
+\ No newline at end of file
++  sampling_args: {radius: 2.5}
++  bg_color: [0.5, 0.5, 0.5]
++  smooth: False
++  lighting_args: {alpha: 0.1, beta: 0.1, ambient_light: [1.0, 1.0, 1.0]}
+\ No newline at end of file
+diff --git a/configs/mesh_segmentation_cdc.yaml b/configs/mesh_segmentation_cdc.yaml
+new file mode 100644
+index 0000000..7ec52c9
+--- /dev/null
++++ b/configs/mesh_segmentation_cdc.yaml
+@@ -0,0 +1,58 @@
++---
++cache: /path/to/Projects/samesh/outputs/mesh_segmentation_cache
++cache_overwrite: True
++output: /path/to/Projects/samesh/cdc_results_dodecahedron_advanced/
++target_labels: null
++
++vlm:
++  gemini:
++    project: your-gcp-project
++    model: gemini-3-pro-preview
++
++sam:
++  sam:
++    checkpoint: /path/to/Projects/samesh/third_party/segment-anything-2/checkpoints/sam2_hiera_large.pt
++    model_config: sam2_hiera_l.yaml
++    auto: True
++    ground: False
++    engine_config:
++      points_per_side: 36
++      crop_n_layers: 0
++      #min_mask_region_area: 1024 # sam2 breaks since it uses C connected components
++      pred_iou_thresh: 0.5
++      stability_score_thresh: 0.7
++      stability_score_offset: 1.0
++
++sam_mesh:
++  use_modes: ['sdf', 'norms']
++  min_area: 2048
++  connections_bin_resolution: 100
++  connections_bin_threshold_percentage: 0.125 
++  smoothing_threshold_percentage_size: 0.025
++  smoothing_threshold_percentage_area: 0.025
++  smoothing_iterations: 64
++  # repartition_cost: 1
++  # repartition_lambda: 6
++  # repartition_iterations: 1
++  # connections_threshold: 0
++
++  # CDC values  
++  repartition_cost: 1
++  repartition_lambda: 7
++  repartition_lambda_lb: 1
++  repartition_lambda_ub: 15
++  repartition_lambda_tolerance: 1
++  repartition_iterations: 2
++  connections_threshold: 0
++
++renderer:
++  target_dim: [2048, 2048]  # Higher resolution for better quality
++  camera_generation_method: dodecahedron #octohedron
++  renderer_args:
++    interpolate_norms: True
++    uv_map: True  # Use original textures
++  sampling_args: {radius: 2.5}
++  bg_color: [0.95, 0.95, 0.95]  # Light gray background
++  smooth: False  # Enable smooth shading
++  lighting_args: {alpha: 0.3, beta: 0.5, ambient_light: [1.0, 1.0, 1.0]}  # Better lighting balance
++  onscreen: True
+\ No newline at end of file
+diff --git a/configs/mesh_segmentation_cdc_basic.yaml b/configs/mesh_segmentation_cdc_basic.yaml
+new file mode 100644
+index 0000000..d93998a
+--- /dev/null
++++ b/configs/mesh_segmentation_cdc_basic.yaml
+@@ -0,0 +1,58 @@
++---
++cache: /path/to/Projects/samesh/outputs/mesh_segmentation_cache
++cache_overwrite: True
++output: /path/to/Projects/samesh/cdc_results_dodecahedron_basic/
++target_labels: null
++
++vlm:
++  gemini:
++    project: your-gcp-project
++    model: gemini-3-pro-preview
++
++sam:
++  sam:
++    checkpoint: /path/to/Projects/samesh/third_party/segment-anything-2/checkpoints/sam2_hiera_large.pt
++    model_config: sam2_hiera_l.yaml
++    auto: True
++    ground: False
++    engine_config:
++      points_per_side: 36
++      crop_n_layers: 0
++      #min_mask_region_area: 1024 # sam2 breaks since it uses C connected components
++      pred_iou_thresh: 0.5
++      stability_score_thresh: 0.7
++      stability_score_offset: 1.0
++
++sam_mesh:
++  use_modes: ['sdf', 'norms']
++  min_area: 2048
++  connections_bin_resolution: 100
++  connections_bin_threshold_percentage: 0.125 
++  smoothing_threshold_percentage_size: 0.025
++  smoothing_threshold_percentage_area: 0.025
++  smoothing_iterations: 64
++  repartition_cost: 1
++  repartition_lambda: 6
++  repartition_iterations: 1
++  connections_threshold: 0
++
++  # CDC values  
++  # repartition_cost: 1
++  # repartition_lambda: 7
++  # repartition_lambda_lb: 1
++  # repartition_lambda_ub: 15
++  # repartition_lambda_tolerance: 1
++  # repartition_iterations: 2
++  # connections_threshold: 0
++
++renderer:
++  target_dim: [2048, 2048]  # Higher resolution for better quality
++  camera_generation_method: dodecahedron #octohedron
++  renderer_args:
++    interpolate_norms: True
++    uv_map: True  # Use original textures
++  sampling_args: {radius: 2.5}
++  bg_color: [0.95, 0.95, 0.95]  # Light gray background
++  smooth: False  # Enable smooth shading
++  lighting_args: {alpha: 0.3, beta: 0.5, ambient_light: [1.0, 1.0, 1.0]}  # Better lighting balance
++  onscreen: True
+\ No newline at end of file
+diff --git a/pyproject.toml b/pyproject.toml
+index 07fbaaa..857c723 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -7,7 +7,7 @@ name = "samesh"
+ version = "0.0.1"
+ description = "Segment Any Mesh"
+ readme = "README.md"
+-requires-python = ">=3.12.0"
++requires-python = ">=3.11.0"
+ classifiers = [
+     "Programming Language :: Python",
+ ]
+@@ -24,8 +24,8 @@ dependencies = [
+     "scikit-learn",
+     "natsort",
+     "numpy==1.26.4",
+-    "torch==2.3.1",
+-    "torchvision==0.18.1",
++#    "torch==2.3.1",
++ #   "torchvision==0.18.1",
+     "torchtyping",
+     "matplotlib",
+     "opencv-python",
+diff --git a/run_cdc.py b/run_cdc.py
+new file mode 100644
+index 0000000..1b50595
+--- /dev/null
++++ b/run_cdc.py
+@@ -0,0 +1,297 @@
++import os
++import json
++from collections import defaultdict
++import numpy as np
++import trimesh
++import argparse
++import copy
++import open3d as o3d
++
++from PIL import Image, ImageDraw, ImageFont
++from pygltflib import GLTF2
++
++
++from omegaconf import OmegaConf
++from samesh.data.loaders import *
++from samesh.models.sam_mesh import  colormap_faces_mesh, generate_high_contrast_palette, segment_mesh
++
++from samesh.renderer.renderer import Renderer
++from samesh.renderer.renderer import render_multiview
++from samesh.utils.mesh import vertex_to_face_colors
++from samesh.utils.vlm import Gemini, check_segmentation_prompt
++
++def renumbered_face2label(face2label: dict):
++    face2label = {int(k): int(v) for k, v in face2label.items()}
++    label2face = defaultdict(list)
++    for face, label in face2label.items():
++        label2face[label].append(face)
++    labels = sorted(list(label2face.keys()))
++    renumbered_labels = {j: i for i, j in enumerate(labels, start=1)}  # Start from 1 to avoid label 0
++    renumbered_face2label = {k: renumbered_labels[v] for k, v in face2label.items()}
++    return renumbered_face2label
++
++def mark_segments_with_numbers(
++    image: Image.Image,
++    face_ids: np.ndarray,
++    face2label: dict[int, int],
++    font_size: int = 40,
++    outline_width: int = 3,
++    min_segment_pixels: int = 100,
++    min_distance: int = 80
++) -> Image:
++    """
++    Mark each segment in the rendered image with its label number.
++    Each number is colored with its segment's color and repositioned if too close to others.
++    Automatically uses white outline for dark colors and black outline for light colors.
++    
++    Args:
++        image: PIL Image of the rendered mesh
++        face_ids: Array of face IDs per pixel from renderer (h x w)
++        face2label: Dictionary mapping face IDs to segment labels
++        font_size: Size of the text font
++        outline_width: Width of text outline
++        min_segment_pixels: Minimum number of pixels for a segment to get a label
++        min_distance: Minimum distance between label centroids (will adjust if closer)
++        
++    Returns:
++        PIL Image with segment numbers drawn on it
++    """
++    # Create a copy of the image to draw on
++    labeled_image = image.copy()
++    draw = ImageDraw.Draw(labeled_image)
++    
++    # Try to load a font, fall back to default if not available
++    try:
++        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
++    except:
++        try:
++            font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", font_size)
++        except:
++            font = ImageFont.load_default()
++    
++    # Generate the same high-contrast color palette used in colormap_faces_mesh
++    label_max = max(face2label.values()) if face2label else 1
++    palette = generate_high_contrast_palette(label_max + 1, seed=0)
++    
++    def get_luminance(color):
++        """Calculate relative luminance using the formula for perceived brightness"""
++        r, g, b = color[0] / 255.0, color[1] / 255.0, color[2] / 255.0
++        return 0.299 * r + 0.587 * g + 0.114 * b
++    
++    def choose_outline_color(segment_color):
++        """Choose white outline for dark colors, black for light colors"""
++        luminance = get_luminance(segment_color)
++        # If luminance is less than 0.5, the color is dark, use white outline
++        return (255, 255, 255) if luminance < 0.5 else (0, 0, 0)
++    
++    # Group pixels by segment label
++    label2pixels = {}
++    label0_count = 0
++    
++    for y in range(face_ids.shape[0]):
++        for x in range(face_ids.shape[1]):
++            face_id = face_ids[y, x]
++            
++            # Skip background pixels
++            if face_id == -1:
++                continue
++                
++            # Get the label for this face
++            label = face2label.get(face_id, None)
++            
++            if label == 0:
++                label0_count += 1
++            
++            if label is not None and label != 0:  # Skip background label 0
++                if label not in label2pixels:
++                    label2pixels[label] = []
++                label2pixels[label].append((x, y))
++    
++    if label0_count > 0:
++        print(f"Note: {label0_count} pixels have label 0 (treated as background, not labeled)")
++    
++    # Calculate centroids and colors for each segment
++    label_info = []
++    for label, pixels in label2pixels.items():
++        # Skip if too few pixels
++        if len(pixels) < min_segment_pixels:
++            print(f"Skipping label {label}: only {len(pixels)} pixels (minimum {min_segment_pixels})")
++            continue
++            
++        # Calculate centroid
++        pixels_array = np.array(pixels)
++        centroid_x = int(np.mean(pixels_array[:, 0]))
++        centroid_y = int(np.mean(pixels_array[:, 1]))
++        
++        # Get segment color from palette
++        segment_color = tuple(palette[label].tolist())
++        outline_color = choose_outline_color(segment_color)
++        
++        label_info.append({
++            'label': label,
++            'x': centroid_x,
++            'y': centroid_y,
++            'color': segment_color,
++            'outline_color': outline_color,
++            'pixels': pixels_array
++        })
++    
++    # Adjust positions to avoid overlaps
++    adjusted_positions = []
++    for i, info in enumerate(label_info):
++        x, y = info['x'], info['y']
++        
++        # Check distance to all previously placed labels
++        for prev_x, prev_y in adjusted_positions:
++            distance = np.sqrt((x - prev_x)**2 + (y - prev_y)**2)
++            
++            if distance < min_distance and distance > 0:
++                # Move this label away from the previous one
++                angle = np.arctan2(y - prev_y, x - prev_x)
++                x = int(prev_x + min_distance * np.cos(angle))
++                y = int(prev_y + min_distance * np.sin(angle))
++                
++                # Clamp to image bounds
++                x = max(0, min(x, face_ids.shape[1] - 1))
++                y = max(0, min(y, face_ids.shape[0] - 1))
++        
++        adjusted_positions.append((x, y))
++        info['adjusted_x'] = x
++        info['adjusted_y'] = y
++    
++    # Draw all labels
++    for info in label_info:
++        text = str(info['label'])
++        x, y = info['adjusted_x'], info['adjusted_y']
++        
++        # Get text bounding box
++        bbox = draw.textbbox((x, y), text, font=font)
++        text_width = bbox[2] - bbox[0]
++        text_height = bbox[3] - bbox[1]
++        
++        # Center the text
++        text_x = x - text_width // 2
++        text_y = y - text_height // 2
++        
++        # Draw outline with adaptive color (white for dark segments, black for light)
++        for dx in range(-outline_width, outline_width + 1):
++            for dy in range(-outline_width, outline_width + 1):
++                if dx * dx + dy * dy <= outline_width * outline_width:
++                    draw.text((text_x + dx, text_y + dy), text, font=font, fill=info['outline_color'])
++        
++        # Draw main text with segment color
++        draw.text((text_x, text_y), text, font=font, fill=info['color'])
++    
++    return labeled_image
++
++def render_mesh(mesh, output_dir, renderer_args, image_label=None, face2label=None):
++    """
++    Render a mesh with optional segmentation labeling
++    
++    Args:
++        lighting_alpha: Diffuse lighting strength (0.0-1.0). Higher = stronger directional lighting
++        lighting_beta: Ambient lighting level (0.0-1.0). Higher = brighter overall
++    """
++    
++    if isinstance(mesh, str):
++        mesh = trimesh.load(mesh).to_mesh()
++    mesh = vertex_to_face_colors(mesh)
++   
++    
++    if face2label is not None:
++        mesh_colored = colormap_faces_mesh(mesh, face2label, high_contrast=True)
++    else:
++        mesh_colored = mesh
++    renderer = Renderer(renderer_args.copy())
++    renderer.set_object(mesh_colored)
++    renderer.set_camera()
++    
++    renders = render_multiview(renderer, camera_generation_method=renderer_args.camera_generation_method, renderer_args=renderer_args.renderer_args, sampling_args=renderer_args.sampling_args, lighting_args=renderer_args.lighting_args)
++
++    for i, image in enumerate(renders['matte']):
++        if face2label is not None:
++            labeled_image = mark_segments_with_numbers(
++                image, 
++                renders['faces'][i], 
++                face2label,
++                font_size=40,
++                min_segment_pixels=50,
++                min_distance=80  # Minimum distance between nearby labels
++            )
++            labeled_image.save(f'{output_dir}/{image_label}_{i}_labeled.png')
++        else:
++            image.save(f'{output_dir}/{image_label}_{i}.png')
++    return renders
++
++def o3d_visualize_mesh(mesh_input: str):
++    mesh = trimesh.load(mesh_input).to_mesh()
++    # Convert to Open3D format
++    o3d_mesh = o3d.geometry.TriangleMesh()
++    o3d_mesh.vertices = o3d.utility.Vector3dVector(mesh.vertices)
++    o3d_mesh.triangles = o3d.utility.Vector3iVector(mesh.faces)
++    o3d_mesh.compute_vertex_normals()
++
++    # Visualize
++    o3d.visualization.draw_geometries([o3d_mesh])
++
++def label_parts_and_render(config: OmegaConf, mesh_input: str, output_dir: str):
++
++    config.output = Path(config.output) / Path(mesh_input).stem
++
++    # After segmentation, label the parts
++    labeled_dir = os.path.join(config.output,  'labeled')
++    os.makedirs(labeled_dir, exist_ok=True)
++    face2label_file = f'{config.output}/face2label.json'
++    with open(face2label_file, 'r') as f:
++        face2label = json.load(f)
++    face2label = renumbered_face2label(face2label)
++
++    original_mesh = trimesh.load(mesh_input).to_mesh()
++    segmented_mesh = trimesh.load(f'{config.output}/{Path(mesh_input).stem}_segmented.glb').to_mesh()
++    
++    # Prepare for rendering
++    renderer_args = config.renderer.copy()
++    renderer_args['sampling_args']['radius'] = 2.5
++    renderer_args['renderer_args']['uv_map'] = True
++
++    # Render the original mesh
++    original_dir = os.path.join(config.output, 'original')
++    os.makedirs(original_dir, exist_ok=True)
++    original_renders = render_mesh(original_mesh, original_dir, renderer_args, image_label='original')
++
++
++    #Render the segmented mesh
++    renderer_args['sampling_args']['radius'] = 2.5
++    segmented_renders = render_mesh(segmented_mesh, labeled_dir, renderer_args, image_label='segmented', face2label=face2label)
++    return original_renders, segmented_renders
++def main(config: str, mesh_input: str, output_dir: str):
++
++    config = OmegaConf.load(config)
++    if output_dir is not None:
++        config.output = output_dir
++
++    mesh = segment_mesh(mesh_input, config, visualize=True, target_labels=config.target_labels)
++
++    original_renders, segmented_renders = label_parts_and_render(config, mesh_input, output_dir)
++
++    # # Run VLM
++    if "vlm" in config:
++        gemini = Gemini(project=config.vlm.gemini.project, model=config.vlm.gemini.model)
++        prompt = check_segmentation_prompt()
++        prompt_images = []
++        for i, image in enumerate(original_renders['matte']):
++            prompt_images.append(image)
++            prompt_images.append(segmented_renders['matte'][i])
++        result = gemini(prompt, images=prompt_images)
++        result_text = gemini.get_result_text(result)
++        print(result_text)
++        print()
++
++
++if __name__ == '__main__':
++    parser = argparse.ArgumentParser()
++    parser.add_argument('--config', type=str, default='configs/mesh_segmentation_cdc.yaml')
++    parser.add_argument('--mesh-input', type=str, default=None, required=True, help='Path to the input mesh .glb file.')
++    parser.add_argument('--output-dir', type=str, default=None, required=False, help='Path to the output directory.')
++    args = parser.parse_args()
++    main(args.config, args.mesh_input, args.output_dir)
+\ No newline at end of file
+diff --git a/src/samesh/models/sam_mesh.py b/src/samesh/models/sam_mesh.py
+index b4362ad..b93651e 100644
+--- a/src/samesh/models/sam_mesh.py
++++ b/src/samesh/models/sam_mesh.py
+@@ -26,11 +26,87 @@ from samesh.utils.mesh import duplicate_verts
+ from samesh.models.shape_diameter_function import *
+ 
+ 
+-def colormap_faces_mesh(mesh: Trimesh, face2label: dict[int, int], background=np.array([0, 0, 0])) -> Trimesh:
++def generate_high_contrast_palette(n_colors, seed=0):
+     """
++    Generate a palette of maximally distinct colors using HSV color space.
++    
++    Args:
++        n_colors: Number of colors to generate
++        seed: Random seed for reproducibility
++        
++    Returns:
++        np.ndarray: Array of RGB colors (n_colors x 3) with values in [0, 255]
++    """
++    import colorsys
++    
++    # Start with a base set of highly distinctive colors
++    base_colors = [
++        [255, 0, 0],      # Red
++        [0, 255, 0],      # Green
++        [0, 0, 255],      # Blue
++        [255, 255, 0],    # Yellow
++        [255, 0, 255],    # Magenta
++        [0, 255, 255],    # Cyan
++        [255, 128, 0],    # Orange
++        [128, 0, 255],    # Purple
++        [0, 255, 128],    # Spring Green
++        [255, 0, 128],    # Rose
++        [128, 255, 0],    # Chartreuse
++        [0, 128, 255],    # Azure
++        [255, 165, 0],    # Dark Orange
++        [148, 0, 211],    # Dark Violet
++        [50, 205, 50],    # Lime Green
++        [220, 20, 60],    # Crimson
++        [64, 224, 208],   # Turquoise
++        [255, 215, 0],    # Gold
++        [186, 85, 211],   # Medium Orchid
++        [34, 139, 34],    # Forest Green
++    ]
++    
++    if n_colors <= len(base_colors):
++        return np.array(base_colors[:n_colors], dtype=np.uint8)
++    
++    # If we need more colors, generate them using HSV with maximum saturation and value
++    colors = base_colors.copy()
++    np.random.seed(seed)
++    
++    # Generate additional colors by spacing them evenly in HSV hue space
++    n_additional = n_colors - len(base_colors)
++    for i in range(n_additional):
++        # Use golden ratio to space hues for maximum distinction
++        hue = (i * 0.618033988749895) % 1.0
++        # Vary saturation and value slightly for more variety
++        sat = 0.8 + 0.2 * np.random.random()
++        val = 0.8 + 0.2 * np.random.random()
++        
++        rgb = colorsys.hsv_to_rgb(hue, sat, val)
++        colors.append([int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255)])
++    
++    return np.array(colors[:n_colors], dtype=np.uint8)
++
++
++def colormap_faces_mesh(mesh: Trimesh, face2label: dict[int, int], background=np.array([0, 0, 0]), high_contrast=False) -> Trimesh:
++    """
++    Color mesh faces according to their labels.
++    
++    Args:
++        mesh: Input mesh
++        face2label: Dictionary mapping face indices to label indices
++        background: Background color for label 0
++        high_contrast: If True, use high-contrast color palette. If False, use random colors.
++    
++    Returns:
++        Mesh with colored faces
+     """
+     label_max = max(face2label.values())
+-    palette = RandomState(0).randint(0, 255, (label_max + 1, 3)) # +1 for unlabeled faces
++    
++    if high_contrast:
++        # Use high-contrast palette
++        palette = generate_high_contrast_palette(label_max + 1, seed=0)
++    else:
++        # Use original random palette
++        palette = RandomState(0).randint(0, 255, (label_max + 1, 3))
++    
+     palette[0] = background
+     mesh = duplicate_verts(mesh) # needed to prevent face color interpolation
+     faces_colored = set()
+@@ -112,11 +188,26 @@ def visualize_items(items: dict, path: Path) -> None:
+     if 'sdf' in items:
+         for i, image in tqdm(enumerate(items['sdf']), 'Visualizing SDF'):
+             image.save(f'{path}/sdf_{i}.png')
++    if 'rgb' in items:
++        for i, image in tqdm(enumerate(items['rgb']), 'Visualizing RGB'):
++            image.save(f'{path}/rgb_{i}.png')
+     
+     for i, faces in tqdm(enumerate(items['faces']), 'Visualizing FaceIDs'):
+         colormap_faces(faces).save(f'{path}/faces_{i}.png')
+     for i, cmask in tqdm(enumerate(items['cmasks']), 'Visualizing SAM Masks'):
+         colormap_mask (cmask).save(f'{path}/masks_{i}.png')
++    
++    # Visualize per-mode masks if available
++    if 'mode_bmasks' in items:
++        for mode_name, mode_masks in items['mode_bmasks'].items():
++            mode_dir = f'{path}/{mode_name}_masks'
++            os.makedirs(mode_dir, exist_ok=True)
++            for i, bmask_array in tqdm(enumerate(mode_masks), f'Visualizing {mode_name} masks'):
++                # bmask_array is a numpy array of binary masks, combine them for visualization
++                if len(bmask_array) > 0:
++                    combined = combine_bmasks(bmask_array, sort=True)
++                    colormap_mask(combined).save(f'{mode_dir}/mask_{i}.png')
++    
+     for i, norms in tqdm(enumerate(items['norms']), 'Visualizing Normals'):
+         colormap_norms(norms).save(f'{path}/norms_{i}.png')
+     for i, norms_masked in tqdm(enumerate(items['norms_masked']), 'Visualizing Normals Mask'):
+@@ -141,14 +232,23 @@ def compute_face2label(
+     normal_mask = norms_mask(norms, pose)
+ 
+     face2label = defaultdict(Counter)
+-    for j, label in enumerate(labels):
++    for j, label in enumerate(tqdm(labels, desc=f'face2label (view {label_sequence_count})', leave=False)):
+         label_sequence = label_sequence_count + j
+         faces_mask = (mask == label) & normal_mask
+         faces, counts = np.unique(faceid[faces_mask], return_counts=True)
+-        faces = faces[counts > threshold_counts]
+-        faces = faces[faces != -1] # remove background
+-        for face in faces:
+-            face2label[int(face)][label_sequence] += np.sum(faces_mask & (faceid == face))
++        
++        ## Old method of filtering faces   
++        # faces = faces[counts > threshold_counts]
++        # faces = faces[faces != -1] # remove background
++        # for face in faces:
++        #     face2label[int(face)][label_sequence] += np.sum(faces_mask & (faceid == face))
++        
++        # Filter faces and counts together (avoid recomputing counts in loop)
++        valid_mask = (counts > threshold_counts) & (faces != -1)
++        faces = faces[valid_mask]
++        counts = counts[valid_mask]
++        for face, count in zip(faces, counts):
++            face2label[int(face)][label_sequence] += count
+     return face2label
+ 
+ 
+@@ -172,6 +272,16 @@ def compute_connections(i: int, j: int, face2label1: dict, face2label2: dict, co
+     return connections
+ 
+ 
++def _compute_face2label_wrapper(args):
++    """Wrapper for imap (single-argument) compatibility."""
++    return compute_face2label(*args)
++
++
++def _compute_connections_wrapper(args):
++    """Wrapper for imap_unordered (single-argument) compatibility."""
++    return compute_connections(*args)
++
++
+ class SamModelMesh(nn.Module):
+     """
+     """
+@@ -240,37 +350,80 @@ class SamModelMesh(nn.Module):
+             return self.sam(image)
+ 
+         bmasks_list = []
++        mode_order = []  # Track which modes were used, in order
++        mode_bmasks = {}  # Store per-mode masks for visualization
++        
++        # Get mode weights from config (default to 1.0 for all)
++        # Weights are integers that control how many times each mode's masks are counted
++        mode_weights = self.config.sam_mesh.get('mode_weights', {})
++        default_weight = 1
++
++        # Process modes that use the ORIGINAL scene first, then SDF last (which modifies it)
++        
++        if 'matte' in self.config.sam_mesh.use_modes: # default matte render (shaded grayscale)
++            images_matte = renders['matte']
++            bmasks_matte = [
++                call_sam(image, faces != -1) for image, faces in \
++                    tqdm(zip(images_matte, renders['faces']), 'Computing SAM Masks for matte')
++            ]
++            mode_bmasks['matte'] = bmasks_matte
++            weight = int(mode_weights.get('matte', default_weight))
++            for _ in range(weight):
++                bmasks_list.extend(bmasks_matte)
++            mode_order.append('matte')
++
++        if 'rgb' in self.config.sam_mesh.use_modes: # true color render with original textures
++            # Render with uv_map=True to get original colors/textures
++            renders_rgb = render_func(uv_map=True)
++            images_rgb = renders_rgb['matte']  # 'matte' key contains RGB when uv_map=True
++            
++            bmasks_rgb = [
++                call_sam(image, faces != -1) for image, faces in \
++                    tqdm(zip(images_rgb, renders['faces']), 'Computing SAM Masks for rgb')
++            ]
++            mode_bmasks['rgb'] = bmasks_rgb
++            weight = int(mode_weights.get('rgb', default_weight))
++            for _ in range(weight):
++                bmasks_list.extend(bmasks_rgb)
++            renders['rgb'] = images_rgb
++            mode_order.append('rgb')
+ 
+         if 'norms' in self.config.sam_mesh.use_modes:
+-            images1 = [colormap_norms(norms) for norms in renders['norms']]
+-            bmasks1 = [
++            images_norms = [colormap_norms(norms) for norms in renders['norms']]
++            bmasks_norms = [
+                 call_sam(image, faces != -1) for image, faces in \
+-                    tqdm(zip(images1, renders['faces']), 'Computing SAM Masks for norms')
++                    tqdm(zip(images_norms, renders['faces']), 'Computing SAM Masks for norms')
+             ]
+-            bmasks_list.extend(bmasks1)
++            mode_bmasks['norms'] = bmasks_norms
++            weight = int(mode_weights.get('norms', default_weight))
++            for _ in range(weight):
++                bmasks_list.extend(bmasks_norms)
++            mode_order.append('norms')
+ 
++        # SDF must be LAST - it modifies the scene by loading a colorized mesh
+         if 'sdf' in self.config.sam_mesh.use_modes:
+-            #scene_sdf = remove_texture(scene)
+             tmesh_sdf = prep_mesh_shape_diameter_function(scene)
+             tmesh_sdf = colormap_shape_diameter_function(tmesh_sdf, sdf_values=shape_diameter_function(tmesh_sdf))
+             self.load(tmesh_sdf)
+             renders_sdf = render_func(uv_map=True)
+-            images2 = renders_sdf['matte']
++            images_sdf = renders_sdf['matte']
+ 
+-            bmasks2 = [
++            bmasks_sdf = [
+                 call_sam(image, faces != -1) for image, faces in \
+-                    tqdm(zip(images2, renders['faces']), 'Computing SAM Masks for sdf')
++                    tqdm(zip(images_sdf, renders['faces']), 'Computing SAM Masks for sdf')
+             ]
+-            bmasks_list.extend(bmasks2)
+-            renders['sdf'] = renders_sdf['matte']
+-
+-        if 'matte' in self.config.sam_mesh.use_modes: # default matte render
+-            images3 = renders['matte']
+-            bmasks3 = [
+-                call_sam(image, faces != -1) for image, faces in \
+-                    tqdm(zip(images3, renders['faces']), 'Computing SAM Masks for matte')
+-            ]
+-            bmasks_list.extend(bmasks3)
++            mode_bmasks['sdf'] = bmasks_sdf
++            weight = int(mode_weights.get('sdf', default_weight))
++            for _ in range(weight):
++                bmasks_list.extend(bmasks_sdf)
++            renders['sdf'] = images_sdf
++            mode_order.append('sdf')
++        
++        # Store mode info and per-mode masks
++        renders['mode_order'] = mode_order
++        renders['mode_weights'] = {mode: int(mode_weights.get(mode, default_weight)) for mode in mode_order}
++        renders['mode_bmasks'] = mode_bmasks  # Per-mode masks for visualization
++        print(f"Mode weights (masks repeated N times): {renders['mode_weights']}")
+ 
+         self.load(scene) # restore original scene
+ 
+@@ -290,6 +443,11 @@ class SamModelMesh(nn.Module):
+         cmasks = [remove_artifacts(mask, mode='holes'  , min_area=min_area) for mask in cmasks]
+         renders['bmasks'] = bmasks
+         renders['cmasks'] = cmasks
++        
++        # Track which mode each set of n views came from (for weighted face2label)
++        # bmasks_list layout: [norms_view0, norms_view1, ..., sdf_view0, sdf_view1, ..., matte_view0, ...]
++        # Each mode contributes n masks (one per view)
++        renders['mode_per_view_batch'] = mode_order  # Each mode has n consecutive masks in bmasks_list
+ 
+         if self.config.cache is not None:
+             self.config.cache.mkdir(parents=True)
+@@ -302,9 +460,14 @@ class SamModelMesh(nn.Module):
+         """
+         """
+         be, en = 0, len(renders['faces'])
+-        renders = {k: [v[i] for i in range(be, en) if len(v)] for k, v in renders.items()}
++        # Only slice the core render lists needed for lifting
++        # Skip visualization-only lists (rgb, sdf) and metadata (mode_bmasks, mode_order, mode_weights)
++        core_keys = {'faces', 'cmasks', 'norms', 'poses', 'norms_masked', 'matte'}
++        renders = {
++            k: ([v[i] for i in range(be, en) if len(v)] if k in core_keys and isinstance(v, list) else v)
++            for k, v in renders.items()
++        }
+ 
+-        print('Computing face2label for each view on ', mp.cpu_count(), ' cores')
+         label_sequence_count = 1 # background is 0
+         args = []
+         for faceid, cmask, norms, pose in zip(
+@@ -319,9 +482,13 @@ class SamModelMesh(nn.Module):
+             label_sequence_count += len(labels)
+         
+         with mp.Pool(mp.cpu_count()) as pool:
+-            face2label_views = pool.starmap(compute_face2label, args)
++            face2label_views = list(tqdm(
++                pool.starmap(compute_face2label, args) if len(args) <= 1 else 
++                pool.imap(_compute_face2label_wrapper, args),
++                total=len(args),
++                desc=f'Computing face2label ({mp.cpu_count()} cores)'
++            ))
+         
+-        print('Building match graph on ', mp.cpu_count(), ' cores')
+         args = []
+         for i, face2label1 in enumerate(face2label_views):
+             for j, face2label2 in enumerate(face2label_views):
+@@ -329,7 +496,12 @@ class SamModelMesh(nn.Module):
+                     args.append((i, j, face2label1, face2label2, self.config.sam_mesh.get('connections_threshold', 32)))
+         
+         with mp.Pool(mp.cpu_count()) as pool:
+-            partial_connections = pool.starmap(compute_connections, args)
++            partial_connections = list(tqdm(
++                pool.starmap(compute_connections, args) if len(args) <= 1 else
++                pool.imap_unordered(_compute_connections_wrapper, args),
++                total=len(args),
++                desc=f'Building match graph ({mp.cpu_count()} cores)'
++            ))
+ 
+         connections_ratios = defaultdict(Counter)
+         for c in partial_connections:
+@@ -402,10 +574,76 @@ class SamModelMesh(nn.Module):
+     
+         connection_graph = igraph.Graph(edges=connections, directed=False)
+         connection_graph.simplify()
+-        communities = connection_graph.community_leiden(resolution_parameter=0)
+-        # for comm in communities:
+-        #     print(comm)
+-        # exit()
++        
++        # Community detection algorithm selection
++        community_algorithm = self.config.sam_mesh.get('community_algorithm', 'leiden')
++        leiden_resolution = self.config.sam_mesh.get('leiden_resolution', 0.0)
++        multi_community = self.config.sam_mesh.get('multi_community', False)
++        
++        print(f"  Graph: {connection_graph.vcount()} nodes, {connection_graph.ecount()} edges")
++        
++        # Debug mode: run all algorithms and compare
++        if multi_community:
++            print("\n" + "="*60)
++            print("MULTI-COMMUNITY DEBUG: Comparing all algorithms")
++            print("="*60)
++            
++            algorithms = [
++                ('leiden (res=0.0)', lambda g: g.community_leiden(resolution_parameter=0.0)),
++                ('leiden (res=0.5)', lambda g: g.community_leiden(resolution_parameter=0.5)),
++                ('leiden (res=1.0)', lambda g: g.community_leiden(resolution_parameter=1.0)),
++                ('leiden (res=2.0)', lambda g: g.community_leiden(resolution_parameter=2.0)),
++                ('louvain', lambda g: g.community_multilevel()),
++                ('label_propagation', lambda g: g.community_label_propagation()),
++                ('infomap', lambda g: g.community_infomap()),
++                ('walktrap', lambda g: g.community_walktrap().as_clustering()),
++            ]
++            
++            print(f"\n{'Algorithm':<25} {'Communities':>12} {'Sizes (top 5)':<30}")
++            print("-" * 70)
++            
++            for name, algo_fn in algorithms:
++                try:
++                    result = algo_fn(connection_graph)
++                    n_comm = len(result)
++                    sizes = sorted([len(c) for c in result], reverse=True)[:5]
++                    print(f"{name:<25} {n_comm:>12} {str(sizes):<30}")
++                except Exception as e:
++                    print(f"{name:<25} {'ERROR':>12} {str(e)[:30]}")
++            
++            print("-" * 70)
++            print(f"Using: {community_algorithm} (resolution={leiden_resolution})")
++            print("="*60 + "\n")
++        
++        # Run the selected algorithm
++        if community_algorithm == 'leiden':
++            # Leiden: resolution=0 gives fewer/larger communities, higher gives more/smaller
++            communities = connection_graph.community_leiden(resolution_parameter=leiden_resolution)
++        elif community_algorithm == 'louvain':
++            # Louvain: classic modularity-based community detection
++            communities = connection_graph.community_multilevel()
++        elif community_algorithm == 'label_propagation':
++            # Label propagation: fast, good for clear community structure
++            communities = connection_graph.community_label_propagation()
++        elif community_algorithm == 'infomap':
++            # Infomap: based on information flow, good for hierarchical structure
++            communities = connection_graph.community_infomap()
++        elif community_algorithm == 'walktrap':
++            # Walktrap: random walks, good for detecting overlapping communities
++            communities = connection_graph.community_walktrap().as_clustering()
++        else:
++            print(f"Unknown community algorithm '{community_algorithm}', using leiden")
++            communities = connection_graph.community_leiden(resolution_parameter=leiden_resolution)
++        
++        print(f"Community detection: {community_algorithm} (resolution={leiden_resolution})")
++        print(f"  Found {len(communities)} communities")
++        
++        # Debug: show community sizes
++        comm_sizes = sorted([len(c) for c in communities], reverse=True)
++        if len(comm_sizes) > 10:
++            print(f"  Sizes (top 10): {comm_sizes[:10]}...")
++        else:
++            print(f"  Sizes: {comm_sizes}")
+         label2label_consistent = {}
+         comm_count = 0
+         for comm in communities:
+@@ -455,10 +693,10 @@ class SamModelMesh(nn.Module):
+             for face in components[i]:
+                 face2label_consistent.pop(face)
+         
+-        # fill islands
+-        print('Smoothing labels')
++
+         smooth_iterations = self.config.sam_mesh.smoothing_iterations
+-        for iteration in range(smooth_iterations):
++        print('Smoothing labels')
++        for iteration in tqdm(range(smooth_iterations), desc='Smoothing labels'):
+             count = 0
+             changes = {}
+             for face in range(len(self.renderer.tmesh.faces)):
+@@ -575,8 +813,15 @@ class SamModelMesh(nn.Module):
+         for face in range(len(self.renderer.tmesh.faces)):
+             if face not in face2label_consistent:
+                 face2label_consistent[face] = 0
+-        face2label_consistent = self.split (face2label_consistent) # needed to label all faces for repartition
+-        face2label_consistent = self.smooth_repartition_faces(face2label_consistent, target_labels=target_labels)
++        if not self.config.sam_mesh.get('skip_split', False):
++            face2label_consistent = self.split(face2label_consistent) # needed to label all faces for repartition
++            
++        else:
++            print('Skipping split (sam_mesh.skip_split=True)')
++        if not self.config.sam_mesh.get('skip_repartition', False):
++            face2label_consistent = self.smooth_repartition_faces(face2label_consistent, target_labels=target_labels)
++        else:
++            print('Skipping repartition (sam_mesh.skip_repartition=True)')
+         face2label_consistent = {int(k): int(v) for k, v in face2label_consistent.items()} # ensure serialization
+         assert self.renderer.tmesh.faces.shape[0] == len(face2label_consistent)
+         return face2label_consistent, self.renderer.tmesh
+@@ -606,14 +851,32 @@ class SamModelMesh(nn.Module):
+         return components
+ 
+ 
+-def segment_mesh(filename: Path | str, config: OmegaConf, visualize=False, extension='glb', target_labels=None, texture=False) -> Trimesh:
++def segment_mesh(filename: Path | str, config: OmegaConf, visualize=False, extension='glb', target_labels=None, texture=False, output_name=None) -> Trimesh:
+     """
++    Segment a mesh using SAMesh.
++    
++    Args:
++        filename: Path to input mesh file
++        config: OmegaConf configuration
++        visualize: Whether to save visualization renders
++        extension: Output file extension (default: 'glb')
++        target_labels: Target number of labels (optional)
++        texture: Whether to preserve texture (default: False)
++        output_name: Custom name for output files. If None, uses input filename stem.
++                     Example: output_name='mailbox' -> 'mailbox_segmented.glb'
++    
++    Returns:
++        Colored trimesh with segmentation
+     """
+     print('Segmenting mesh with SAMesh: ', filename)
+     filename = Path(filename)
+     config = copy.deepcopy(config)
+-    config.cache  = Path(config.cache)  / filename.stem if "cache" in config else None
+-    config.output = Path(config.output) / filename.stem
++    
++    # Use custom output_name if provided, otherwise use input filename stem
++    name = output_name if output_name else filename.stem
++    
++    config.cache  = Path(config.cache)  / name if "cache" in config else None
++    config.output = Path(config.output) / name 
+ 
+     model = SamModelMesh(config)
+     tmesh = read_mesh(filename, norm=True)
+@@ -621,14 +884,22 @@ def segment_mesh(filename: Path | str, config: OmegaConf, visualize=False, exten
+         tmesh = remove_texture(tmesh, visual_kind='vertex')
+     
+     # run sam grounded mesh and optionally visualize renders
+-    visualize_path = f'{config.output}/{filename.stem}_visualized' if visualize else None
++    visualize_path = f'{config.output}/{name}_visualized' if visualize else None
+     faces2label, _ = model(tmesh, visualize_path=visualize_path, target_labels=target_labels)
++    # Multiple faces can have the same label, so we need to split the mesh into parts
++    labels = set(faces2label.values())
++    for label in tqdm(labels, desc='Splitting mesh into parts'):
++        faces = [int(face) for face, label_ in faces2label.items() if label_ == label]
++        tmp_mesh = tmesh.copy()
++        tmp_mesh.update_faces(faces)
++        tmp_mesh.remove_unreferenced_vertices()
++        tmp_mesh.export(f'{config.output}/{name}_part_{label}.glb')
+ 
+     # colormap and save mesh
+     os.makedirs(config.output, exist_ok=True)
+     tmesh_colored = colormap_faces_mesh(tmesh, faces2label)
+-    tmesh_colored.export       (f'{config.output}/{filename.stem}_segmented.{extension}')
+-    json.dump(faces2label, open(f'{config.output}/{filename.stem}_face2label.json', 'w'))
++    tmesh_colored.export(f'{config.output}/{name}_segmented.{extension}')
++    json.dump(faces2label, open(f'{config.output}/face2label.json', 'w'))
+     return tmesh_colored
+ 
+ 
+diff --git a/src/samesh/models/shape_diameter_function.py b/src/samesh/models/shape_diameter_function.py
+index d8ef28c..6dbb258 100644
+--- a/src/samesh/models/shape_diameter_function.py
++++ b/src/samesh/models/shape_diameter_function.py
+@@ -15,6 +15,7 @@ from trimesh.base import Trimesh, Scene
+ from sklearn.mixture import GaussianMixture
+ from tqdm import tqdm
+ from omegaconf import OmegaConf
++import matplotlib.pyplot as plt
+ 
+ from samesh.data.common import NumpyTensor
+ from samesh.data.loaders import scene2mesh, read_mesh
+@@ -164,7 +165,7 @@ def colormap_shape_diameter_function(mesh: Trimesh, sdf_values: NumpyTensor['f']
+     """
+     assert len(mesh.faces) == len(sdf_values)
+     mesh = duplicate_verts(mesh) # needed to prevent face color interpolation
+-    mesh.visual.face_colors = trimesh.visual.interpolate(sdf_values, color_map='jet')
++    mesh.visual.face_colors = trimesh.visual.interpolate(sdf_values, color_map=plt.get_cmap('jet'))
+     return mesh
+ 
+ 
+diff --git a/src/samesh/renderer/renderer.py b/src/samesh/renderer/renderer.py
+index 37f62c1..7da24a4 100644
+--- a/src/samesh/renderer/renderer.py
++++ b/src/samesh/renderer/renderer.py
+@@ -1,11 +1,13 @@
+ import os
+ os.environ['PYOPENGL_PLATFORM'] = 'egl'
+ os.environ['EGL_DEVICE_ID'] = '-1' # NOTE: necessary to not create GPU contention
++from pygltflib import GLTF2
+ 
+ ### START VOODOO ###
+-# Dark encantation for disabling anti-aliasing in pyrender (if needed)
++# Enable anti-aliasing for better quality
+ import OpenGL.GL
+-antialias_active = False
++antialias_active = True  # Changed to True for better quality
++antialias_active = False   # Changed to True for better quality
+ old_gl_enable = OpenGL.GL.glEnable
+ def new_gl_enable(value):
+     if not antialias_active and value == OpenGL.GL.GL_MULTISAMPLE:
+@@ -19,11 +21,13 @@ import pyrender
+ import cv2
+ import numpy as np
+ import torch
++import time
+ from numpy.random import RandomState
+ from PIL import Image
+ from pyrender.shader_program import ShaderProgramCache as DefaultShaderCache
+ from trimesh import Trimesh, Scene
+ from omegaconf import OmegaConf
++from omegaconf.listconfig import ListConfig
+ from tqdm import tqdm
+ 
+ from samesh.data.common import NumpyTensor
+@@ -54,9 +58,16 @@ def colormap_norms(norms: NumpyTensor['h w'], background=np.array([255, 255, 255
+     norms = (norms * 255).astype(np.uint8)
+     return Image.fromarray(norms)
+ 
++def create_default_metallic_material():
++    return pyrender.MetallicRoughnessMaterial(
++        baseColorFactor=[0.8, 0.8, 0.8, 1.0],
++        metallicFactor=0.0,      # Non-metallic default
++        roughnessFactor=0.5,     # Medium roughness 
++    )
+ 
+-DEFAULT_CAMERA_PARAMS = {'fov': 60, 'znear': 0.01, 'zfar': 16}
+-
++DEFAULT_CAMERA_PARAMS = {'fov': 60, 'znear': 0.1, 'zfar': 10}  # Tighter near/far for better depth precision
++# Dark encantation for disabling anti-aliasing in pyrender (if needed)
++# DEFAULT_CAMERA_PARAMS = {'fov': 60, 'znear': 0.01, 'zfar': 16} # Original values
+ 
+ class Renderer:
+     """
+@@ -65,7 +76,11 @@ class Renderer:
+         """
+         """
+         self.config = config
+-        self.renderer = pyrender.OffscreenRenderer(*config.target_dim)
++        self.renderer = pyrender.OffscreenRenderer(
++            viewport_width=config.target_dim[0],
++            viewport_height=config.target_dim[1],
++            point_size=1.0
++        )
+         self.shaders = {
+             'default': DefaultShaderCache(),
+             'normals': NormalShaderCache(),
+@@ -78,18 +93,30 @@ class Renderer:
+         """
+         if isinstance(source, Scene):
+             self.tmesh = scene2mesh(source)
+-            self.scene = pyrender.Scene(ambient_light=[1.0, 1.0, 1.0]) # RGB no direction
++            ambient_light = self.config.lighting_args.get('ambient_light', [1.0, 1.0, 1.0])
++            bg_color = self.config.get('bg_color', [1.0, 1.0, 1.0])
++            if isinstance(ambient_light, ListConfig):
++                ambient_light = list(ambient_light)
++            if isinstance(bg_color, ListConfig):
++                bg_color = list(bg_color)
++            self.scene = pyrender.Scene(ambient_light=ambient_light, bg_color=bg_color) # RGB no direction
+             for name, geom in source.geometry.items():
+                 if name in source.graph:
+                     pose, _ = source.graph[name]
+                 else:
+                     pose = None
+-                self.scene.add(pyrender.Mesh.from_trimesh(geom, smooth=smooth), pose=pose)
++                self.scene.add(pyrender.Mesh.from_trimesh(geom, smooth=self.config.smooth), pose=pose)
+         
+         elif isinstance(source, Trimesh):
+             self.tmesh = source
+-            self.scene = pyrender.Scene(ambient_light=[1.0, 1.0, 1.0])
+-            self.scene.add(pyrender.Mesh.from_trimesh(source, smooth=smooth))
++            ambient_light = self.config.lighting_args.get('ambient_light', [1.0, 1.0, 1.0])
++            bg_color = self.config.get('bg_color', [1.0, 1.0, 1.0])
++            if isinstance(ambient_light, ListConfig):
++                ambient_light = list(ambient_light)
++            if isinstance(bg_color, ListConfig):
++                bg_color = list(bg_color)
++            self.scene = pyrender.Scene(ambient_light=ambient_light, bg_color=bg_color)
++            self.scene.add(pyrender.Mesh.from_trimesh(source, smooth=self.config.smooth))
+ 
+         else:
+             raise ValueError(f'Invalid source type {type(source)}')
+@@ -98,9 +125,43 @@ class Renderer:
+         self.tmesh_faceid = duplicate_verts(self.tmesh)
+         self.scene_faceid = pyrender.Scene(ambient_light=[1.0, 1.0, 1.0])
+         self.scene_faceid.add(
+-            pyrender.Mesh.from_trimesh(self.tmesh_faceid, smooth=smooth)
++            pyrender.Mesh.from_trimesh(self.tmesh_faceid, smooth=self.config.smooth)
+         )
+ 
++        # Add directional lights for better illumination
++        direc_l1 = pyrender.DirectionalLight(color=np.ones(3), intensity=3.0)
++        direc_l2 = pyrender.DirectionalLight(color=np.ones(3), intensity=2.0)
++        direc_l3 = pyrender.DirectionalLight(color=np.ones(3), intensity=2.0)
++        
++        # Position lights from multiple angles
++        self.scene.add(direc_l1, pose=np.array([
++            [1, 0, 0, 0],
++            [0, 1, 0, 0],
++            [0, 0, 1, 2],
++            [0, 0, 0, 1]
++        ]))
++        
++        self.scene.add(direc_l2, pose=np.array([
++            [1, 0, 0, -2],
++            [0, 1, 0, 2],
++            [0, 0, 1, 1],
++            [0, 0, 0, 1]
++        ]))
++        
++        self.scene.add(direc_l3, pose=np.array([
++            [1, 0, 0, 2],
++            [0, 1, 0, -1],
++            [0, 0, 1, 1],
++            [0, 0, 0, 1]
++        ]))
++
++        # if self.config.onscreen:
++        #     self.viewer = pyrender.Viewer(self.scene)
++
++        # while True:
++        #     time.sleep(0.01)
++        #     continue
++
+     def set_camera(self, camera_params: dict = None):
+         """
+         """
+@@ -115,13 +176,15 @@ class Renderer:
+     def render(
+         self, 
+         pose: HomogeneousTransform, 
+-        lightdir=np.array([0.0, 0.0, 1.0]), uv_map=False, interpolate_norms=True, blur_matte=False
++        lightdir=np.array([0.0, 0.0, 1.0]), uv_map=False, interpolate_norms=True, blur_matte=False,
++        alpha=0.5, beta=0.25, **kwargs
+     ) -> dict:
+         """
+         """
+         self.scene       .set_pose(self.camera_node       , pose)
+         self.scene_faceid.set_pose(self.camera_node_faceid, pose)
+ 
++
+         def render(shader: str, scene):
+             """
+             """
+@@ -150,7 +213,12 @@ class Renderer:
+             faces = faces.astype(np.int32)
+             faces = faces[:, :, 0] * 65536 + faces[:, :, 1] * 256 + faces[:, :, 2]
+             faces[faces == (256 ** 3 - 1)] = -1 # set background to -1
++
++            if np.any(faces >= self.tmesh_faceid.faces.shape[0]):
++                print(f'WARNING: Faces {np.unique(faces[faces >= self.tmesh_faceid.faces.shape[0]])} are out of range. Setting them to -1.')
++                faces[faces >= self.tmesh_faceid.faces.shape[0]] = -1
+             return faces
++            
+ 
+         def render_bcent(bcent: NumpyTensor['h w 3']) -> NumpyTensor['h w 3']:
+             """
+@@ -162,7 +230,7 @@ class Renderer:
+             depth: NumpyTensor['h w'],
+             faces: NumpyTensor['h w'],
+             bcent: NumpyTensor['h w 3'],
+-            alpha=0.5, beta=0.25, gaussian_kernel_width=5, gaussian_sigma=1,
++            gaussian_kernel_width=5, gaussian_sigma=1,
+         ) -> NumpyTensor['h w 3']:
+             """
+             """
+@@ -220,7 +288,7 @@ def render_multiview(
+     if verbose:
+         views = tqdm(views, 'Rendering Multiviews...')
+     for pose in views:
+-        outputs = renderer.render(pose, lightdir=compute_lightdir(pose), **renderer_args)
++        outputs = renderer.render(pose, lightdir=compute_lightdir(pose), **renderer_args, **lighting_args)
+         outputs['matte'] = Image.fromarray(outputs['matte'])
+         outputs['poses'] = pose
+         renders.append(outputs)
+diff --git a/src/samesh/utils/mesh.py b/src/samesh/utils/mesh.py
+index 8e9cb67..ec23be8 100644
+--- a/src/samesh/utils/mesh.py
++++ b/src/samesh/utils/mesh.py
+@@ -16,10 +16,14 @@ def duplicate_verts(mesh: Trimesh) -> Trimesh:
+ 
+     NOTE: removes visuals for verticies, but preserves for faces.
+     """
++    # Ensure we have face colors even when visuals are textured
++    mesh = vertex_to_face_colors(mesh)
++
+     verts = mesh.vertices[mesh.faces.reshape(-1), :]
+     faces = np.arange(0, verts.shape[0])
+     faces = faces.reshape(-1, 3)
+-    return Trimesh(vertices=verts, faces=faces, face_colors=mesh.visual.face_colors, process=False)
++    face_colors = mesh.visual.face_colors if hasattr(mesh.visual, "face_colors") else None
++    return Trimesh(vertices=verts, faces=faces, face_colors=face_colors, process=False)
+ 
+ 
+ def handle_pose(pose: NumpyTensor['4 4']) -> NumpyTensor['4 4']:
+@@ -99,6 +103,15 @@ def norm_scene(scene: Scene) -> Scene:
+         geom.vertices *= (1 - 1e-3)
+     return scene
+ 
++def vertex_to_face_colors(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
++    if isinstance(mesh.visual, trimesh.visual.TextureVisuals):
++        vertex_colors = mesh.visual.to_color()
++        face_colors = trimesh.visual.color.vertex_to_face_color(vertex_colors.vertex_colors, mesh.faces)
++        color_visuals = trimesh.visual.ColorVisuals(face_colors=face_colors)
++        mesh.visual = color_visuals
++
++    return mesh
++
+ 
+ if __name__ == "__main__":
+     from samesh.data.loaders import read_mesh
+diff --git a/src/samesh/utils/polyhedra.py b/src/samesh/utils/polyhedra.py
+index bb61cf2..748c18b 100644
+--- a/src/samesh/utils/polyhedra.py
++++ b/src/samesh/utils/polyhedra.py
+@@ -69,6 +69,212 @@ def dodecahedron():
+     ]) / np.sqrt(a ** 2 + b ** 2)
+ 
+ 
++def icosidodecahedron():
++    """
++    30 vertices - combination of icosahedron and dodecahedron
++    """
++    phi = golden_ratio()
++    vertices = []
++    # Permutations of (0, 0, phi)
++    for sign1 in [-1, 1]:
++        vertices.append([0, 0, sign1 * phi])
++        vertices.append([0, sign1 * phi, 0])
++        vertices.append([sign1 * phi, 0, 0])
++    # Permutations of (1/2, phi/2, phi^2/2)
++    phi2 = phi * phi
++    for s1 in [-1, 1]:
++        for s2 in [-1, 1]:
++            for s3 in [-1, 1]:
++                vertices.append([s1 * 0.5, s2 * phi / 2, s3 * phi2 / 2])
++                vertices.append([s1 * phi / 2, s2 * phi2 / 2, s3 * 0.5])
++                vertices.append([s1 * phi2 / 2, s2 * 0.5, s3 * phi / 2])
++    vertices = np.array(vertices)
++    return vertices / np.linalg.norm(vertices[0])
++
++
++def truncated_octahedron():
++    """
++    24 vertices - octahedron with corners cut off
++    """
++    vertices = []
++    # All permutations of (0, 1, 2)
++    coords = [0, 1, 2]
++    from itertools import permutations
++    for perm in permutations(coords):
++        for s1 in [-1, 1]:
++            for s2 in [-1, 1]:
++                v = [s1 * perm[0] if perm[0] != 0 else 0,
++                     s2 * perm[1] if perm[1] != 0 else 0,
++                     perm[2]]
++                if perm[2] != 0:
++                    for s3 in [-1, 1]:
++                        vertices.append([s1 * perm[0] if perm[0] != 0 else 0,
++                                        s2 * perm[1] if perm[1] != 0 else 0,
++                                        s3 * perm[2]])
++                else:
++                    vertices.append(v)
++    # Remove duplicates
++    vertices = np.array(vertices)
++    vertices = np.unique(vertices, axis=0)
++    return vertices / np.linalg.norm(vertices[0])
++
++
++def rhombicuboctahedron():
++    """
++    24 vertices - expanded cube/octahedron
++    """
++    vertices = []
++    # All permutations of (±1, ±1, ±(1+√2))
++    r = 1 + np.sqrt(2)
++    for s1 in [-1, 1]:
++        for s2 in [-1, 1]:
++            for s3 in [-1, 1]:
++                vertices.append([s1 * 1, s2 * 1, s3 * r])
++                vertices.append([s1 * 1, s2 * r, s3 * 1])
++                vertices.append([s1 * r, s2 * 1, s3 * 1])
++    vertices = np.array(vertices)
++    return vertices / np.linalg.norm(vertices[0])
++
++
++def truncated_icosahedron():
++    """
++    60 vertices - soccer ball / buckyball shape
++    """
++    phi = golden_ratio()
++    vertices = []
++    
++    # Even permutations of (0, 1, 3*phi)
++    three_phi = 3 * phi
++    for s1 in [-1, 1]:
++        for s2 in [-1, 1]:
++            vertices.append([0, s1 * 1, s2 * three_phi])
++            vertices.append([s1 * 1, s2 * three_phi, 0])
++            vertices.append([s1 * three_phi, 0, s2 * 1])
++    
++    # Even permutations of (1, 2+phi, 2*phi)
++    two_plus_phi = 2 + phi
++    two_phi = 2 * phi
++    for s1 in [-1, 1]:
++        for s2 in [-1, 1]:
++            for s3 in [-1, 1]:
++                vertices.append([s1 * 1, s2 * two_plus_phi, s3 * two_phi])
++                vertices.append([s1 * two_plus_phi, s2 * two_phi, s3 * 1])
++                vertices.append([s1 * two_phi, s2 * 1, s3 * two_plus_phi])
++    
++    # Even permutations of (phi, 2, phi^3)
++    phi3 = phi ** 3
++    for s1 in [-1, 1]:
++        for s2 in [-1, 1]:
++            for s3 in [-1, 1]:
++                vertices.append([s1 * phi, s2 * 2, s3 * phi3])
++                vertices.append([s1 * 2, s2 * phi3, s3 * phi])
++                vertices.append([s1 * phi3, s2 * phi, s3 * 2])
++    
++    vertices = np.array(vertices)
++    return vertices / np.linalg.norm(vertices[0])
++
++
++def snub_cube():
++    """
++    24 vertices - chiral polyhedron with good coverage
++    """
++    # Tribonacci constant
++    t = (1 + np.cbrt(19 + 3*np.sqrt(33)) + np.cbrt(19 - 3*np.sqrt(33))) / 3
++    vertices = []
++    
++    # Even permutations with all sign combinations
++    for s1 in [-1, 1]:
++        for s2 in [-1, 1]:
++            for s3 in [-1, 1]:
++                vertices.append([s1 * 1, s2 * (1/t), s3 * t])
++                vertices.append([s1 * (1/t), s2 * t, s3 * 1])
++                vertices.append([s1 * t, s2 * 1, s3 * (1/t)])
++    
++    vertices = np.array(vertices)
++    return vertices / np.linalg.norm(vertices[0])
++
++
++def geodesic_sphere(subdivisions=2):
++    """
++    Geodesic sphere from subdivided icosahedron.
++    subdivisions=1: 12 vertices (icosahedron)
++    subdivisions=2: 42 vertices
++    subdivisions=3: 162 vertices
++    subdivisions=4: 642 vertices
++    """
++    phi = golden_ratio()
++    
++    # Start with icosahedron vertices
++    verts = [
++        [-1,  phi,  0], [ 1,  phi,  0], [-1, -phi,  0], [ 1, -phi,  0],
++        [ 0, -1,  phi], [ 0,  1,  phi], [ 0, -1, -phi], [ 0,  1, -phi],
++        [ phi,  0, -1], [ phi,  0,  1], [-phi,  0, -1], [-phi,  0,  1],
++    ]
++    verts = np.array(verts, dtype=float)
++    verts = verts / np.linalg.norm(verts[0])
++    
++    # Icosahedron faces (triangles)
++    faces = [
++        [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
++        [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
++        [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
++        [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
++    ]
++    
++    def midpoint(v1, v2):
++        mid = (v1 + v2) / 2
++        return mid / np.linalg.norm(mid)
++    
++    for _ in range(subdivisions - 1):
++        new_faces = []
++        edge_cache = {}
++        
++        for tri in faces:
++            v = [verts[tri[0]], verts[tri[1]], verts[tri[2]]]
++            mids = []
++            
++            for i in range(3):
++                edge = tuple(sorted([tri[i], tri[(i+1)%3]]))
++                if edge not in edge_cache:
++                    new_vert = midpoint(verts[edge[0]], verts[edge[1]])
++                    edge_cache[edge] = len(verts)
++                    verts = np.vstack([verts, new_vert])
++                mids.append(edge_cache[edge])
++            
++            # Create 4 new triangles
++            new_faces.append([tri[0], mids[0], mids[2]])
++            new_faces.append([tri[1], mids[1], mids[0]])
++            new_faces.append([tri[2], mids[2], mids[1]])
++            new_faces.append([mids[0], mids[1], mids[2]])
++        
++        faces = new_faces
++    
++    return verts
++
++
++def fibonacci_sphere(n=100):
++    """
++    Generate n approximately uniformly distributed points on a sphere
++    using the Fibonacci/golden spiral method.
++    """
++    phi = golden_ratio()
++    indices = np.arange(n)
++    
++    # Golden angle in radians
++    theta = 2 * np.pi * indices / phi
++    
++    # Z coordinates evenly spaced from -1 to 1
++    z = 1 - (2 * indices + 1) / n
++    
++    # Radius at each z
++    radius = np.sqrt(1 - z * z)
++    
++    x = radius * np.cos(theta)
++    y = radius * np.sin(theta)
++    
++    return np.column_stack([x, y, z])
++
++
+ def standard(n=8, elevation=15):
+     """
+     """
+diff --git a/src/samesh/utils/vlm.py b/src/samesh/utils/vlm.py
+new file mode 100644
+index 0000000..284cfa1
+--- /dev/null
++++ b/src/samesh/utils/vlm.py
+@@ -0,0 +1,242 @@
++from io import BytesIO
++import base64
++import PIL
++
++
++from google import genai
++from google.genai.types import RawReferenceImage, MaskReferenceImage, MaskReferenceConfig, EditImageConfig, \
++    Part, Content, GenerateContentConfig, SafetySetting
++
++
++
++def assert_valid_key(key, valid_keys, name):
++    """Helper function to validate a key is in valid_keys"""
++    if key not in valid_keys:
++        raise ValueError(f"Invalid {name}: {key}. Must be one of {list(valid_keys.keys())}")
++
++
++class Gemini():
++    """
++    Class for interfacing with supported Gemini models
++    """
++    # TODO: Is this actually accurate?
++    RESOLUTIONS = {
++        "1:1": (1024, 1024),
++        "3:4": (864, 1184),
++        "4:3": (1184, 864),
++        "9:16": (736, 1408),
++        "16:9": (1408, 736),
++    }
++    IMAGE_SHAPES = {res for res in RESOLUTIONS.values()}
++
++    VERSIONS = {
++        "gemini-2.0-flash-preview-image-generation": {
++            "modalities": ["TEXT", "IMAGE"],
++            "max_tokens": 8192,
++        },
++        "gemini-2.5-pro": {
++            "modalities": ["TEXT"],
++            "max_tokens": 65535,
++        },
++        "gemini-2.5-flash": {
++            "modalities": ["TEXT"],
++            "max_tokens": 65535,
++        },
++        "gemini-2.5-flash-image-preview": {
++            "modalities": ["TEXT", "IMAGE"],
++            "max_tokens": 32768,
++        },
++    }
++    def __init__(
++        self,
++        project,
++        location="global",
++        model="gemini-2.0-flash-preview-image-generation",
++    ):
++        """
++        Args:
++            project (str): Name of the project to use when calling the Gemini client
++            location (str): Location to use when calling the Gemini client
++            model (str): Gemini model to use. Must be one of self.VERSIONS
++        """
++        self.project = project
++        print("="*100)
++        print(f"USING PROJECT: {self.project}")
++        print("="*100)
++        self.location = location
++        assert_valid_key(key=model, valid_keys=self.VERSIONS, name="Gemini model")
++        self.model = model
++        self.client = genai.Client(
++            vertexai=True,
++            project=self.project,
++            location=self.location,
++        )
++
++    def __call__(
++        self,
++        prompt,
++        image_paths=None,
++        images=None,
++        temperature=0,
++        top_p=0,
++        seed=0,
++        n_retries=3,
++        print_results=False,
++    ):
++        """
++        Calls the Gemini model using the client API.
++
++        Args:
++            prompt (str): Text prompt to use
++            image_paths (None or str or list of str): If specified, absolute path(s) corresponding to reference image(s)
++                to use as part of the overall prompt
++            images (None or PIL.Image or list of PIL.Image): If specified, PIL.Image(s) to use as part of the overall prompt
++            temperature (float): Temperature of the model when querying. Lower values correspond to more deterministic
++                outputs
++            top_p (float): Determines the cumulative probability of top-p tokens to select from probabilistically.
++                E.g.: If top_p=0.7 and tokens a, b, c have probabilities of 0.4, 0.3, 0.2 respectively, only tokens
++                a and b will be sampled from
++            seed (int): Random seed to use
++            n_retries (int): Number of retries to attempt
++            print_results (bool): Whether to print results as they're being streamed
++
++        Returns:
++            None or list of google.genai.types.GenerateContentResponse: Stream of responses generated from Gemini
++        """
++        parts = [Part.from_text(text=prompt)]
++        if image_paths is not None:
++            image_paths = [image_paths] if isinstance(image_paths, str) else image_paths
++            msg1_images = []
++            for image_path in image_paths:
++                msg1_images.append(Part.from_bytes(
++                    data=self.encode_image_from_path(image_path),
++                    mime_type="image/png",
++                ))
++            parts = msg1_images + parts
++        if images is not None:
++            images = [images] if isinstance(images, PIL.Image.Image) else images
++            msg1_images = []
++            for image in images:
++                msg1_images.append(Part.from_bytes(
++                    data=self.encode_PIL_image(image),
++                    mime_type="image/png",
++                ))
++            parts = msg1_images + parts
++        contents = [Content(
++            role="user",
++            parts=parts,
++        )]
++
++        generate_content_config = GenerateContentConfig(
++            temperature=temperature,
++            top_p=top_p,
++            seed=seed,
++            max_output_tokens=self.VERSIONS[self.model]["max_tokens"],
++            response_modalities=self.VERSIONS[self.model]["modalities"],
++            safety_settings=[SafetySetting(
++                category="HARM_CATEGORY_HATE_SPEECH",
++                threshold="OFF"
++            ), SafetySetting(
++                category="HARM_CATEGORY_DANGEROUS_CONTENT",
++                threshold="OFF"
++            ), SafetySetting(
++                category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
++                threshold="OFF"
++            ), SafetySetting(
++                category="HARM_CATEGORY_HARASSMENT",
++                threshold="OFF"
++            ), SafetySetting(
++                category="HARM_CATEGORY_IMAGE_HATE",
++                threshold="OFF"
++            ), SafetySetting(
++                category="HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT",
++                threshold="OFF"
++            ), SafetySetting(
++                category="HARM_CATEGORY_IMAGE_HARASSMENT",
++                threshold="OFF"
++            ), SafetySetting(
++                category="HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT",
++                threshold="OFF"
++            )],
++        )
++
++        result = None
++        for i in range(n_retries):
++            if result is not None:
++                break
++            print(f"Querying Gemini [{self.model}]: attempt {i + 1} of {n_retries}...")
++            _result = []
++            try:
++                for chunk in self.client.models.generate_content_stream(
++                    model=self.model,
++                    contents=contents,
++                    config=generate_content_config,
++                ):
++                    if print_results:
++                        print(chunk.text, end="")
++                    _result.append(chunk)
++                result = _result
++            except Exception as e:
++                print(f"\nFailed attempt {i + 1} of {n_retries}: {e}")
++                print(f"\nFailed attempt {i + 1} of {n_retries}")
++
++        return result
++
++    def get_result_text(self, result):
++        return "".join(res.text for res in result)
++
++    def get_result_images(self, result):
++        images = []
++        for res in result:
++            for part in res.candidates[0].content.parts:
++                if part.inline_data:
++                    # The image data is in base64 encoded format within part.inline_data.data
++                    image_data = part.inline_data.data
++
++                    # You can then process this data, for example, save it as an image file
++                    # Decode the base64 data and open it with PIL (Pillow)
++                    image = PIL.Image.open(BytesIO(image_data))
++                    images.append(image)
++        return images
++
++    @staticmethod
++    def encode_image_from_path(image_path):
++        """
++        Encodes image located at @image_path so that it can be included as part of GPT prompts
++
++        Args:
++            image_path (str): Absolute path to image to encode
++
++        Returns:
++            bytes: Encoded image
++        """
++        with open(image_path, "rb") as image_file:
++            return base64.b64encode(image_file.read()).decode('utf-8')
++
++    @staticmethod
++    def encode_PIL_image(image: PIL.Image.Image) -> str:
++        buffered = BytesIO()
++        image.save(buffered, format="PNG")
++        img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
++        return img_str
++
++
++
++def check_segmentation_prompt():
++
++    return "You are an expert in image analysis and object segmentation.\n\n" + \
++    "### Task Description ###\n\n" + \
++    "You will be given a sequence of images of an object. These images are rendered from different viewpoints of the object. \n\n" + \
++    "The images alternate between a rendered image of the object and a segmented image of the object. \n\n" + \
++    "Each segment is labeled with a number. The color of the segment is the same as the color of the number. \n\n" + \
++    "Each color represents a different segment of the object. The colors are consistent throughout the sequence of images. \n\n" + \
++    "However, the object may be over segmented. Your task is to identify the parts of the object that are segmented correctly. \n\n" + \
++    "All parts of the object that move together and are part of the same articulated component should be labeled with the same number. For example, a handle of a drawer should be labeled with the same number as the drawer. \n\n" + \
++    "All parts of the object that do not move together should be labeled with a different number. For example, the body of a drawer should be labeled with a different number than the wheels. This is because wheels can rotate independently of the body of the drawer. \n\n" + \
++    "Please group the segments that correspond to the parts of the object that move together and provide this as a list of lists. \n\n" + \
++    "Additionally, provide your reasoning for the grouping as a list of strings. \n\n" + \
++    "Provide the list as a JSON object with the following fields: \n\n" + \
++    f"{{'parts': [[int, int, int], [int, int, int]], 'reasoning': [str, str]}}" + \
++    "### Example ###\n\n" + \
++    "### Output ###\n\n" + \
++    "{{'parts': [[1, 2, 3], [4, 5, 6]], 'reasoning': ['The parts labeled 1 and 2 move together, so they should be labeled with the same number.', 'The parts labeled 3 and 4 do not move together, so they should be labeled with different numbers.']}}" 
+\ No newline at end of file
