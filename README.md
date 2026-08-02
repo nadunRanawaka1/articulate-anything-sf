@@ -213,8 +213,8 @@ Step 5 normally takes its model from `conf/config_simfoundry.yaml`, which is sha
 `s5_articulate.model_name` in a scene config overrides it for that scene only — useful for running the same
 object on two models without duplicating the articulation config. `s5_articulate.vlm_backend` and
 `s5_articulate.claude_location` can be overridden the same way.
-[`simfoundry/cfg/red_mailbox_claude.yaml`](simfoundry/cfg/red_mailbox_claude.yaml) is a worked example: the
-same mailbox as `red_mailbox.yaml`, articulated by Claude Opus 5 instead of Gemini.
+[`simfoundry/cfg/claude_template.yaml`](simfoundry/cfg/claude_template.yaml) is a ready-made scene config
+that runs every VLM step on Claude — copy it and fill in the `<FILL>` fields.
 
 For the standalone (non-SimFoundry) workflow, use `model_name` in [`conf/config.yaml`](conf/config.yaml).
 

@@ -1,0 +1,120 @@
+# Template for running the pipeline on Anthropic Claude instead of Gemini.
+#
+# Identical to hunyuan_template.yaml except that every VLM step uses Claude.
+# Copy it, fill in the <FILL> fields, and run:
+#
+#   conda activate articulate-anything-hunyuan
+#   export ANTHROPIC_API_KEY=sk-ant-...
+#   cd simfoundry && python complete_workflow.py --config-name=<your-config>
+#
+# Notes specific to Claude:
+#   - Claude takes text, images and PDFs but NOT video. The `simfoundry_video`
+#     joint critic normally uploads the prediction mp4; on a Claude model it
+#     automatically samples frames instead, so no config change is needed.
+#   - Opus 5 / Opus 4.8 / Sonnet 5 reject `temperature`; response style is
+#     steered by the prompt and cost/quality by `effort` (see
+#     GEN_CONFIG_CLAUDE in articulate_anything/agent/agent.py).
+defaults:
+  - _self_
+  - override hydra/hydra_logging: disabled
+  - override hydra/job_logging: custom
+
+# ===== Main cfg =====
+root_dir: ../simfoundry_results
+scene_name: <FILL>  # Top-level directory name
+seed: 0
+visualize: false
+debug: false
+# anthropic -> the Anthropic API directly (Claude only, needs ANTHROPIC_API_KEY)
+# vertex    -> Vertex AI via gcloud ADC (serves both Gemini and Claude)
+vlm_backend: anthropic
+# Only read when vlm_backend is `vertex`; harmless otherwise.
+gcloud_project: ${oc.env:GCLOUD_PROJECT,null}
+gcloud_location: global
+# Vertex region used for Claude models only ("global" is the safe choice).
+claude_location: global
+rerun_all: false
+verbose: true
+
+# Copy articulation tree from first object to all others (skips VLM for similar objects)
+copy_articulation_from_first: false
+
+# ===== Objects =====
+objects:
+  - name: <FILL>                      # e.g. red_mailbox
+    mesh_path: path/to/canonical_mesh/iter_0.glb
+    image_path: path/to/upsampled/iter_0.png
+
+# ===== Shared step configurations =====
+
+s1_render:
+  rerun: false
+  convert_to_partnet: true
+  out_dirname: s1_render
+  camera_mode: icosahedron
+  num_views: 12
+  renderer: pyrender   # pyrender (default, light) | blender (needs the blender binary; better textures)
+  resolution:
+  - 1920
+  - 1080
+s2_generate_articulation_tree:
+  rerun: false
+  out_dirname: s2_generate_articulation_tree
+  # claude-opus-5 | claude-opus-4-8 | claude-sonnet-5 | claude-haiku-4-5
+  model_name: claude-opus-5
+s3_segment_mesh:
+  rerun: false
+  segment_method: hunyuan
+  out_dirname: s3_segment_mesh
+  camera_mode: icosahedron
+  num_views: 12
+  renderer: pyrender
+  resolution:
+  - 1920
+  - 1080
+  max_segments: 15
+  make_watertight: false
+  watertight_grid_res: 128
+  watertight_epsilon: 0.005
+  repair_mesh: false
+  clean_mesh: false   # P3-SAM face cleaning strips textures
+  explode: true
+  explosion_factor: 0.4
+  num_clusters: 10
+
+  point_num: 500000
+  threshold: 0.85
+  prompt_num: 400
+  smooth_iterations: 3
+  remove_disconnected_regions: false
+  min_region_ratio: 0.1
+  min_region_faces: 50
+  use_solid_color: false
+  solid_color: [128, 128, 128]
+  segment_model_path: null   # null -> P3-SAM weights from ~/.cache/p3sam/weights
+  samesh_config_path: samesh/simfoundry_basic_no_split.yaml
+s4_merge_mesh_parts:
+  rerun: false
+  out_dirname: s4_merge_mesh_parts
+  model_name: claude-opus-5
+  interactive_correction: true   # opens a Dash UI to fix segment->part assignment
+s5_articulate:
+  rerun: true
+  out_dirname: s5_articulate
+  # Per-scene override of `model_name` in conf/config_simfoundry.yaml, which
+  # every scene otherwise shares. `vlm_backend` and `claude_location` can be
+  # overridden here too; otherwise the scene-level values above apply.
+  model_name: claude-opus-5
+  rotate_meshes: false
+  auto_raise_offset: true
+  auto_raise_offset_clearance: 0.5
+  auto_camera: true              # Auto-compute camera positions based on object size
+  auto_camera_padding: 2.5       # Distance multiplier (larger = camera further away)
+  auto_camera_min_distance: 0.5  # Minimum camera distance in world units
+  articulation_cfg_path: conf/config_simfoundry.yaml
+hydra:
+  job:
+    chdir: true
+  run:
+    dir: .
+  output_subdir: null
