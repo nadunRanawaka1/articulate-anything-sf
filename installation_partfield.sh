@@ -38,10 +38,13 @@ git submodule update --init --recursive
 mamba create -n articulate-anything-partfield python=3.10 -y
 mamba activate articulate-anything-partfield
 pip install psutil
-pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126
+# pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126
+pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu128
 pip install lightning==2.2 h5py yacs trimesh scikit-image loguru boto3
 pip install mesh2sdf tetgen pymeshlab plyfile einops libigl polyscope potpourri3d simple_parsing arrgh open3d
-pip install torch-scatter -f https://data.pyg.org/whl/torch-2.6.0+cu126.html
+# Must track the torch/CUDA pair pinned above.
+# pip install torch-scatter -f https://data.pyg.org/whl/torch-2.6.0+cu126.html
+pip install torch-scatter -f https://data.pyg.org/whl/torch-2.7.0+cu128.html
 pip install packaging
 pip install ninja
 sudo apt install libx11-6 libgl1 libxrender1
