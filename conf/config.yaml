@@ -7,6 +7,12 @@ dataset_dir: "path/to/DATA/workspace/articulate_anything/partnet-mobility-v0-pro
 api_key: null
 gcloud_project: ${oc.env:GCLOUD_PROJECT}
 gcloud_location: us-west1
+# vertex -> Vertex AI via gcloud ADC (serves both Gemini and Claude)
+# anthropic -> the direct Anthropic API (Claude only, needs ANTHROPIC_API_KEY)
+vlm_backend: vertex
+# Vertex region for Claude only: Claude is not served in every Gemini region
+# (us-west1 above serves Gemini but not Claude). "global" is the safe choice.
+claude_location: global
 n_retries: 3 # number of retries for the LLM agent
 parallel: 4
 max_load_per_gpu: 10
@@ -14,6 +20,10 @@ obj_ids: null
 gpu_id: 0
 cam_view: frontview
 rotate_urdf: true
+# Gemini: gemini-2.5-flash | gemini-2.5-pro | gemini-3.1-pro-preview
+# Claude: claude-opus-5 | claude-opus-4-8 | claude-sonnet-5 | claude-haiku-4-5
+#   Claude takes text/images/PDF but NOT video, so with joint_actor.mode: video
+#   it is shown sampled frames rather than the raw clip.
 model_name: gemini-2.5-pro
 link_placement_path: null
 gen_config:

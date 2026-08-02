@@ -135,8 +135,9 @@ class ArticulationUI:
 
                     api_key = gr.Textbox(label="VLM API Key", type="password",)
                     model_name = gr.Dropdown(
-                        choices=["gemini-1.5-flash-latest", "claude-3-5-sonnet-20241022", "gpt-4o"],
-                        value="gemini-1.5-flash-latest",
+                        choices=["gemini-2.5-flash", "gemini-2.5-pro",
+                                 "claude-opus-5", "claude-sonnet-5", "gpt-4o"],
+                        value="gemini-2.5-flash",
                         label="Select Model"
                     )
 

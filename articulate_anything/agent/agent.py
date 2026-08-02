@@ -9,6 +9,7 @@ from articulate_anything.utils.utils import (
 from articulate_anything.utils.prompt_utils import (
     setup_vlm_model,
     save_prompt_parts_as_html,
+    is_claude_model,
 )
 from omegaconf import OmegaConf
 import os
@@ -18,6 +19,15 @@ from google.genai import types
 
 GEN_CONFIG = {
     "temperature": 0.5,
+}
+
+# Claude ignores `temperature` (Opus 5 and Sonnet 5 reject sampling params
+# outright) and instead takes `effort`, which trades thinking depth against
+# cost. `max_tokens` covers thinking *and* the answer, so it needs headroom:
+# the joint actor emits a full Python function.
+GEN_CONFIG_CLAUDE = {
+    "max_tokens": 32000,
+    "effort": "high",
 }
 
 GEN_CONFIG_SIMFOUNDRY = types.GenerateContentConfig(
@@ -47,6 +57,7 @@ class Agent:
             model_name=cfg.model_name, system_instruction=self.system_instruction, api_key=cfg.api_key, cfg=cfg
         ) # could be model or client
         self.genai_model = "gemini" in cfg.model_name
+        self.claude_model = is_claude_model(cfg.model_name)
         OmegaConf.save(self.cfg, join_path(cfg.out_dir, "config.json"))
 
     @ property
@@ -109,6 +120,8 @@ class Agent:
                                     #     thinking_level="high"
                                     # )
                                 )
+            elif self.claude_model:
+                gen_config = GEN_CONFIG_CLAUDE
             else:
                 gen_config = GEN_CONFIG
 

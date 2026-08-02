@@ -11,8 +11,12 @@ seed: 0
 visualize: false
 debug: false
 gcloud_project: ${oc.env:GCLOUD_PROJECT} # Example: example-real2sim_project-12345
-vlm_backend: vertex  # VLM calls run on Vertex AI Gemini using gcloud_project
+# vertex -> Vertex AI via gcloud ADC (serves both Gemini and Claude)
+# anthropic -> the direct Anthropic API (Claude only, needs ANTHROPIC_API_KEY)
+vlm_backend: vertex
 gcloud_location: global
+# Vertex region used for Claude models only ("global" is the safe choice).
+claude_location: global
 rerun_all: false
 verbose: true
 
@@ -41,6 +45,9 @@ s1_render:
 s2_generate_articulation_tree:
   rerun: false
   out_dirname: s2_generate_articulation_tree
+  # Gemini: gemini-2.5-flash | gemini-2.5-pro | gemini-3.1-pro-preview
+  # Claude: claude-opus-5 | claude-opus-4-8 | claude-sonnet-5 | claude-haiku-4-5
+  # This step only sends rendered images + text, which Claude accepts.
   model_name: gemini-2.5-flash
 s3_segment_mesh:
   rerun: false
@@ -77,6 +84,7 @@ s3_segment_mesh:
 s4_merge_mesh_parts:
   rerun: false
   out_dirname: s4_merge_mesh_parts
+  # Same choices as s2; e.g. claude-opus-5 to run this step on Claude.
   model_name: gemini-3-pro-preview
   interactive_correction: true
 s5_articulate:

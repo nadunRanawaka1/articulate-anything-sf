@@ -1,4 +1,5 @@
 import base64
+import logging
 from io import BytesIO
 from google import genai
 from google.genai.types import RawReferenceImage, MaskReferenceImage, MaskReferenceConfig, EditImageConfig, Image, \
@@ -11,6 +12,14 @@ from PIL import Image as PILImage
 import torch
 
 from articulate_anything.utils.utils import assert_valid_key
+from articulate_anything.utils.prompt_utils import (
+    CLAUDE_VERSIONS,
+    claude_block_from_path,
+    claude_response_text,
+    claude_stream_message,
+    get_claude_caps,
+    make_claude_client,
+)
 
 
 BASIC_SYSTEM_PROMPT = "You are a helpful assistant."
@@ -231,6 +240,138 @@ class Gemini(VLM_API):
                     image = PILImage.open(BytesIO(image_data))
                     images.append(image)
         return images
+
+
+class Claude(VLM_API):
+    """
+    Class for interfacing with Anthropic Claude models served on Vertex AI.
+
+    Drop-in for `Gemini` in the text+image steps of the pipeline: same
+    constructor arguments, same `__call__` signature, same `get_result_text`.
+
+    Claude takes text, images and PDFs -- **not video**. Callers holding a
+    video must sample frames first.
+
+    Auth is gcloud Application Default Credentials (`gcloud auth
+    application-default login`) plus a project, exactly like the Gemini client
+    above -- no Anthropic API key is involved.
+    """
+
+    VERSIONS = CLAUDE_VERSIONS
+
+    def __init__(
+        self,
+        project,
+        location="global",
+        model="claude-opus-5",
+        verbose=False,
+        backend="vertex",
+        api_key=None,
+    ):
+        """
+        Args:
+            project (str): GCP project to bill/route the Vertex AI request
+            location (str): Vertex AI region. "global" is the safe default for
+                Claude; Gemini-only regions (e.g. us-west1) may not serve it.
+            model (str): Claude model to use, e.g. "claude-opus-5". On Vertex
+                the id carries no provider prefix.
+            backend (str): "vertex" (gcloud ADC) or "anthropic" (direct API).
+            api_key (str, optional): Anthropic API key, `backend="anthropic"`
+                only. Falls back to $ANTHROPIC_API_KEY.
+        """
+        self.project = project
+        self.location = location or "global"
+        self.verbose = verbose
+        self.backend = backend or "vertex"
+        assert_valid_key(key=model, valid_keys=self.VERSIONS, name="Claude model")
+        self.model = model
+        self.caps = get_claude_caps(model)
+        if self.verbose:
+            print("=" * 100)
+            if self.backend == "vertex":
+                print(f"USING PROJECT: {self.project} (Claude on Vertex AI, "
+                      f"region={self.location})")
+            else:
+                print(f"USING the Anthropic API directly (Claude, "
+                      f"backend={self.backend})")
+            print("=" * 100)
+        self.client = make_claude_client(api_key=api_key, cfg={
+            "vlm_backend": self.backend,
+            "gcloud_project": self.project,
+            "claude_location": self.location,
+        })
+
+    def __call__(
+        self,
+        prompt,
+        system_prompt=BASIC_SYSTEM_PROMPT,
+        image_paths=None,
+        temperature=0,
+        top_p=0,
+        seed=0,
+        n_retries=3,
+        print_results=False,
+    ):
+        """
+        Calls the Claude model through the Vertex AI client.
+
+        Args:
+            prompt (str): Text prompt to use
+            system_prompt (str): System instruction
+            image_paths (None or str or list of str): absolute path(s) to
+                image (or PDF) files to include in the prompt
+            temperature (float): only sent to models that accept sampling
+                params. Opus 5 / Opus 4.8 / Sonnet 5 reject them, so the value
+                is ignored there -- steer those with the prompt instead.
+            top_p (float): ignored, see `temperature`
+            seed (int): ignored; the Claude API has no seed parameter
+            n_retries (int): Number of retries to attempt
+            print_results (bool): Whether to print the response as it streams
+
+        Returns:
+            anthropic.types.Message: the completed response
+        """
+        content = []
+        if image_paths is not None:
+            image_paths = [image_paths] if isinstance(
+                image_paths, str) else image_paths
+            content.extend(claude_block_from_path(p) for p in image_paths)
+        content.append({"type": "text", "text": prompt})
+
+        kwargs = {
+            "model": self.model,
+            "max_tokens": self.caps["max_tokens"],
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": content}],
+        }
+        if self.caps["thinking"]:
+            kwargs["thinking"] = {"type": self.caps["thinking"]}
+        if self.caps["effort"]:
+            kwargs["output_config"] = {"effort": "high"}
+        if self.caps["sampling"]:
+            kwargs["temperature"] = temperature
+
+        last_error = None
+        for i in range(n_retries):
+            if self.verbose:
+                print(f"Querying Claude [{self.model}]: attempt {i + 1} of "
+                      f"{n_retries}...")
+            try:
+                result = claude_stream_message(
+                    self.client, kwargs, print_results=print_results)
+                logging.info(f"Claude [{self.model}] usage: {result.usage}")
+                print()
+                return result
+            except Exception as e:
+                last_error = e
+                print(f"\nFailed attempt {i + 1} of {n_retries}: {e}")
+
+        raise RuntimeError(
+            f"Claude [{self.model}] failed after {n_retries} attempts"
+        ) from last_error
+
+    def get_result_text(self, result):
+        return claude_response_text(result)
 
 
 # class Imagen3(VLM_API):

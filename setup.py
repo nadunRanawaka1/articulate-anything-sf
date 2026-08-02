@@ -27,7 +27,9 @@ INSTALL_REQUIRES = [
     'astor',
     'gradio',
     'openai',
-    'anthropic',
+    # [vertex] pulls google-auth so Claude can be served through Vertex AI.
+    # >=0.120 for adaptive thinking + output_config.effort (Opus 5).
+    'anthropic[vertex]>=0.120.0',
     'moviepy',
     'pyrender',
     'dash'

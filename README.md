@@ -64,8 +64,10 @@ ______________________________________________________________________
 > pipeline on in-the-wild reconstructed meshes, on top of the original PartNet-Mobility workflow.
 >
 > What differs from upstream:
-> - **VLM backend:** all VLM calls run on **Google Vertex AI Gemini** — set `GCLOUD_PROJECT` (see
->   [`conf/config_simfoundry.yaml`](conf/config_simfoundry.yaml)). No proprietary/hosted inference services are required.
+> - **VLM backend:** all VLM calls run on **Google Vertex AI** — either **Gemini** or **Anthropic Claude**
+>   (see [Choosing a VLM](#choosing-a-vlm)). Set `GCLOUD_PROJECT` and pick a model with `model_name`
+>   (see [`conf/config_simfoundry.yaml`](conf/config_simfoundry.yaml)). One set of gcloud credentials covers both;
+>   no separate API keys or proprietary/hosted inference services are required.
 > - **Mesh part-segmentation** has three interchangeable backends selected by `segment_method`:
 >   [`samesh`](https://github.com/gtangg12/samesh), [`Hunyuan3D-Part`](https://github.com/Tencent-Hunyuan/Hunyuan3D-Part),
 >   and [`PartField`](https://github.com/nv-tlabs/PartField).
@@ -186,19 +188,71 @@ For the standalone text / image / video articulation workflow:
 
 ## Getting Started
 
-Our system supports Google Gemini, OpenAI GPT, and Anthropic Claude. Set `model_name` in the config file
-([conf/config.yaml](conf/config.yaml) for the standalone workflow, [conf/config_simfoundry.yaml](conf/config_simfoundry.yaml)
-for the SimFoundry integration) to a supported model such as `gemini-2.5-pro`, `gpt-4o`, or a Claude model.
+### Choosing a VLM
 
-VLM calls run on **Google Vertex AI Gemini** — set your project and authenticate with Application Default
-Credentials:
+Our system supports **Google Gemini**, **Anthropic Claude**, and OpenAI GPT. Gemini and Claude both run on
+**Vertex AI** under the same gcloud credentials, so switching between them is a one-line config change.
+
+Set your project and authenticate with Application Default Credentials:
 
    ```bash
    export GCLOUD_PROJECT=<your-gcp-project>
    gcloud auth application-default login
    ```
 
-For OpenAI/Anthropic models, set the corresponding provider key (e.g. `OPENAI_API_KEY`) instead.
+Then set `model_name` in the config file. There are three independent `model_name` settings:
+
+| Setting | Config file | Drives |
+| --- | --- | --- |
+| `s2_generate_articulation_tree.model_name` | `simfoundry/cfg/<your-config>.yaml` | Step 2 — part recognition + articulation tree |
+| `s4_merge_mesh_parts.model_name` | `simfoundry/cfg/<your-config>.yaml` | Step 4 — merging segmented parts |
+| `s5_articulate.model_name` | `simfoundry/cfg/<your-config>.yaml` | Step 5 — the joint actor / critic loop (optional; overrides the row below) |
+| `model_name` | [`conf/config_simfoundry.yaml`](conf/config_simfoundry.yaml) | Step 5 default, shared by all scene configs |
+
+Step 5 normally takes its model from `conf/config_simfoundry.yaml`, which is shared by every scene. Setting
+`s5_articulate.model_name` in a scene config overrides it for that scene only — useful for running the same
+object on two models without duplicating the articulation config. `s5_articulate.vlm_backend` and
+`s5_articulate.claude_location` can be overridden the same way.
+[`simfoundry/cfg/red_mailbox_claude.yaml`](simfoundry/cfg/red_mailbox_claude.yaml) is a worked example: the
+same mailbox as `red_mailbox.yaml`, articulated by Claude Opus 5 instead of Gemini.
+
+For the standalone (non-SimFoundry) workflow, use `model_name` in [`conf/config.yaml`](conf/config.yaml).
+
+Supported values:
+
+| Provider | Model ids | Notes |
+| --- | --- | --- |
+| Gemini | `gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-3.1-pro-preview` | Default. Accepts video. |
+| Claude | `claude-opus-5`, `claude-opus-4-8`, `claude-sonnet-5`, `claude-haiku-4-5` | Text / images / PDF only — **no video** (see below). |
+| GPT | `gpt-4o`, `o3` | Needs `OPENAI_API_KEY`. |
+
+#### Using Claude Opus on Vertex AI
+
+```yaml
+# conf/config_simfoundry.yaml  (step 5: joint actor + critic)
+model_name: claude-opus-5
+vlm_backend: vertex     # gcloud ADC + gcloud_project; no Anthropic API key
+claude_location: global # Claude is not served in every Gemini region
+```
+
+Notes:
+
+- **Region.** `claude_location` overrides `gcloud_location` for Claude only, because the two model families
+  are not served in the same set of Vertex regions (`gcloud_location: us-west1` serves Gemini but not Claude).
+  `global` is the safe default.
+- **Quota.** Claude models on Vertex have their own per-project quota
+  (`aiplatform.googleapis.com/global_online_prediction_requests_per_base_model`), which is **0 until you
+  request an increase**. A `429 RESOURCE_EXHAUSTED ... base model: anthropic-claude-opus` means quota, not a
+  misconfiguration — request it from
+  [Vertex AI generative AI quotas](https://cloud.google.com/vertex-ai/docs/generative-ai/quotas-genai).
+- **No video input.** Claude accepts text, images and PDFs, but not video. The `simfoundry_video` joint critic
+  normally uploads the prediction MP4; on a Claude model it automatically samples frames from that video
+  instead (and switches to the matching frame-by-frame system prompt), so `joint_critic.type` needs no change.
+  Ground-truth input for the SimFoundry pipeline is already a still image, so nothing else is affected.
+- **Sampling parameters.** Claude Opus 5 / Opus 4.8 / Sonnet 5 reject `temperature` / `top_p` / `top_k`.
+  Response style is steered with the prompt, and cost/quality with `effort` (`GEN_CONFIG_CLAUDE` in
+  [`articulate_anything/agent/agent.py`](articulate_anything/agent/agent.py)).
+- **Direct Anthropic API.** Set `vlm_backend: anthropic` and `ANTHROPIC_API_KEY` to bypass Vertex.
 
 ## Usage
 

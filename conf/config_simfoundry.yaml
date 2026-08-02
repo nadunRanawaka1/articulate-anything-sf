@@ -9,7 +9,15 @@ dataset_dir: "path/to/DATA/workspace/articulate_anything/partnet-mobility-v0-pro
 api_key: null
 gcloud_project: ${oc.env:GCLOUD_PROJECT}
 gcloud_location: us-west1
-vlm_backend: vertex  # VLM calls run on Vertex AI Gemini using gcloud_project
+# Where VLM calls run:
+#   vertex    -> Vertex AI, authenticated with gcloud ADC + gcloud_project.
+#                Serves both Gemini and Claude. (default)
+#   anthropic -> the direct Anthropic API (Claude only); needs ANTHROPIC_API_KEY.
+vlm_backend: vertex
+# Vertex region for Claude only. Claude is not served in every Gemini region
+# (e.g. us-west1), so it gets its own knob; "global" is the safe choice.
+# Ignored when model_name is a Gemini model.
+claude_location: global
 n_retries: 3 # number of retries for the LLM agent
 parallel: 4
 max_load_per_gpu: 10
@@ -17,9 +25,16 @@ obj_ids: null
 gpu_id: 0
 cam_view: angle45
 rotate_urdf: true
+# Model driving the joint actor + joint critic (step 5).
+# Gemini: gemini-2.5-flash, gemini-2.5-pro, gemini-3.1-pro-preview
+# Claude: claude-opus-5, claude-opus-4-8, claude-sonnet-5, claude-haiku-4-5
+# Claude takes text/images/PDF but NOT video: with a Claude model the
+# `simfoundry_video` critic automatically samples frames from the prediction
+# video instead of uploading the mp4.
 # model_name: gemini-2.5-pro
 model_name: gemini-3.1-pro-preview
 # model_name: gemini-2.5-flash
+# model_name: claude-opus-5
 link_placement_path: null
 gen_config:
   overwrite: false # whether to overwrite the VLM output

@@ -7,9 +7,40 @@ import json
 from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
 from articulate_anything.utils.prompts import recognize_parts_from_image, generate_articulation_tree_known_parts, merge_parts
-from articulate_anything.utils.vlm import Gemini, GPT
+from articulate_anything.utils.vlm import Claude, Gemini, GPT
 from articulate_anything.utils.utils import IMAGE_EXTENSIONS
-from articulate_anything.utils.prompt_utils import extract_json_from_response
+from articulate_anything.utils.prompt_utils import extract_json_from_response, is_claude_model
+
+
+def make_vlm(cfg: DictConfig, verbose: bool = False):
+    """
+    Build the VLM client for a step, chosen by `cfg.model_name`.
+
+    Gemini and Claude both run on Vertex AI and authenticate with
+    `cfg.gcloud_project` + gcloud ADC. Claude is not served in every
+    Gemini region, so `cfg.claude_location` can override `cfg.gcloud_location`
+    for the Claude path ("global" is the safe choice). Setting
+    `cfg.vlm_backend: anthropic` sends Claude to the direct Anthropic API
+    instead, which bypasses Vertex quota entirely.
+
+    These steps only ever send images and text, both of which Claude accepts.
+    """
+    if "gemini" in cfg.model_name:
+        return Gemini(project=cfg.gcloud_project, location=cfg.gcloud_location,
+                      model=cfg.model_name, verbose=verbose)
+    elif is_claude_model(cfg.model_name):
+        location = cfg.get("claude_location", None) or cfg.gcloud_location
+        return Claude(project=cfg.gcloud_project, location=location,
+                      model=cfg.model_name, verbose=verbose,
+                      backend=cfg.get("vlm_backend", None) or "vertex",
+                      api_key=cfg.get("api_key", None))
+    elif "gpt" in cfg.model_name:
+        return GPT(model_name=cfg.model_name, verbose=verbose)
+    else:
+        raise ValueError(
+            f"Unsupported model_name '{cfg.model_name}': expected a 'gemini', "
+            "'claude' or 'gpt' model."
+        )
 
 
 def recognize_parts(cfg: DictConfig, verbose: bool = False):
@@ -26,13 +57,7 @@ def recognize_parts(cfg: DictConfig, verbose: bool = False):
     image_paths = [os.path.join(image_dir, f) for f in os.listdir(image_dir) if f.endswith(tuple(IMAGE_EXTENSIONS))]
     user_prompt, system_prompt = recognize_parts_from_image(image_paths, cfg.object_name)
 
-
-    if "gemini" in cfg.model_name:
-        model = Gemini(project=cfg.gcloud_project, location=cfg.gcloud_location, model=cfg.model_name, verbose=verbose)
-    elif "gpt" in cfg.model_name:
-        model = GPT(model_name=cfg.model_name, verbose=verbose)
-    else:
-        raise ValueError(f"Invalid model name: {cfg.model_name}")
+    model = make_vlm(cfg, verbose=verbose)
 
     result = model(user_prompt, system_prompt, image_paths=image_paths)
     
@@ -72,13 +97,8 @@ def generate_articulation_tree(cfg: DictConfig, parts_dict, verbose: bool = Fals
     parts_list = [part['part_name'] for part in parts_dict['part_list']] + [parts_dict['fixed_part_name']]
     user_prompt, system_prompt = generate_articulation_tree_known_parts(cfg.object_name, parts_list)
 
-    if "gemini" in cfg.model_name:
-        model = Gemini(project=cfg.gcloud_project, location=cfg.gcloud_location, model=cfg.model_name, verbose=verbose)
-    elif "gpt" in cfg.model_name:
-        model = GPT(model_name=cfg.model_name, verbose=verbose)
-    else:
-        raise ValueError(f"Invalid model name: {cfg.model_name}")
-    
+    model = make_vlm(cfg, verbose=verbose)
+
     result = model(user_prompt, system_prompt, image_paths=image_paths)
     result_text = model.get_result_text(result)
     result_json = extract_json_from_response(result_text)
@@ -117,13 +137,8 @@ def merge_mesh_parts(cfg: DictConfig, parts_list, verbose: bool = False):
     image_dir = cfg.image_dir + "/original_colors" # TODO: move to cfg or cleanup the codebase
     image_paths = [os.path.join(image_dir, f) for f in os.listdir(image_dir) if f.endswith(tuple(IMAGE_EXTENSIONS))]
     user_prompt, system_prompt = merge_parts(cfg.object_name, parts_list)
-    
-    if "gemini" in cfg.model_name:
-        model = Gemini(project=cfg.gcloud_project, location=cfg.gcloud_location, model=cfg.model_name, verbose=verbose)
-    elif "gpt" in cfg.model_name:
-        model = GPT(model_name=cfg.model_name, verbose=verbose)
-    else:
-        raise ValueError(f"Unsupported model_name '{cfg.model_name}': expected a 'gemini' or 'gpt' model.")
+
+    model = make_vlm(cfg, verbose=verbose)
 
     result = model(user_prompt, system_prompt, image_paths=image_paths)
     result_text = model.get_result_text(result)

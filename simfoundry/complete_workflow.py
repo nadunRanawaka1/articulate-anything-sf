@@ -335,6 +335,9 @@ def process_single_object(cfg, object_config, reference_object_name: str = None)
     s2_cfg.object_name = object_name
     s2_cfg.gcloud_project = cfg.gcloud_project
     s2_cfg.gcloud_location = cfg.gcloud_location
+    # Claude is not served in every Gemini region; let the config override it.
+    s2_cfg.claude_location = cfg.get('claude_location', None)
+    s2_cfg.vlm_backend = cfg.get('vlm_backend', None)
     if Path(f"{s2_cfg.out_dir}/result_recognize_parts.json").exists() and Path(f"{s2_cfg.out_dir}/result_generate_articulation_tree.json").exists() and not s2_cfg.rerun:
         with open(f"{s2_cfg.out_dir}/result_recognize_parts.json", 'r') as f:
             parts_dict = json.load(f)
@@ -432,6 +435,8 @@ def process_single_object(cfg, object_config, reference_object_name: str = None)
     s4_cfg.object_path = s1_cfg.object_path
     s4_cfg.gcloud_project = cfg.gcloud_project
     s4_cfg.gcloud_location = cfg.gcloud_location
+    s4_cfg.claude_location = cfg.get('claude_location', None)
+    s4_cfg.vlm_backend = cfg.get('vlm_backend', None)
     s4_cfg.mesh_parts_dir = f"{s4_cfg.out_dir}/meshes"
     if Path(f"{s4_cfg.out_dir}/dummy.urdf").exists() and not s4_cfg.rerun:
         urdf_path = f"{s4_cfg.out_dir}/dummy.urdf"

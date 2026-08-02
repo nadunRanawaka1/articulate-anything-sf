@@ -627,7 +627,20 @@ def articulate_simfoundry(
     if api_key:
         articulation_cfg.api_key = api_key
 
-    
+    # Optional per-scene override of the VLM driving the joint actor/critic.
+    # Without this the step-5 model is whatever `articulation_cfg_path` says,
+    # so a scene config (simfoundry/cfg/*.yaml) could only switch models by
+    # maintaining a parallel copy of the whole articulation config. Set e.g.
+    # `s5_articulate.model_name: claude-opus-5` instead. Unset keys are left
+    # alone, so existing configs are unaffected.
+    for key in ("model_name", "vlm_backend", "claude_location"):
+        override = cfg.get(key, None)
+        if override is not None:
+            if verbose and articulation_cfg.get(key, None) != override:
+                print(f"  Step 5 override: {key} = {override} "
+                      f"(was {articulation_cfg.get(key, None)})")
+            articulation_cfg[key] = override
+
     # Force pybullet to use the raise_distances.json file just created
     if cfg.get('auto_raise_offset', True):
         articulation_cfg.simulator.urdf.raise_distance_offset = 0.0

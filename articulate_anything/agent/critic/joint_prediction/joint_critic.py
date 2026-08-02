@@ -17,7 +17,10 @@ import json
 from articulate_anything.api.odio_urdf import get_semantic_joint_id
 from PIL import Image
 from google.genai import types
-from articulate_anything.utils.prompt_utils import save_prompt_parts_as_html_simfoundry
+from articulate_anything.utils.prompt_utils import (
+    save_prompt_parts_as_html_simfoundry,
+    supports_video_input,
+)
 CRITIC_INSTRUCTION = """
 ## General Instructions
 
@@ -502,6 +505,18 @@ class JointCriticSimfoundry(JointCritic):
         return prompt_parts
 
 class JointCriticSimfoundryVideo(JointCriticSimfoundry):
+    """
+    Joint critic that shows the model the prediction as a *video*.
+
+    Only Gemini accepts raw video. On a model that doesn't (Claude, GPT) this
+    class transparently falls back to the frame-sampling behaviour of its
+    parent `JointCriticSimfoundry`, so `joint_critic.type: simfoundry_video`
+    stays valid across backends instead of erroring at request time.
+    """
+
+    @property
+    def _send_native_video(self):
+        return supports_video_input(self.cfg.model_name)
 
     def make_prompt_parts(self, *args, **kwargs):
         prompt_parts = self._make_prompt_parts(*args, **kwargs)
@@ -511,12 +526,16 @@ class JointCriticSimfoundryVideo(JointCriticSimfoundry):
         return prompt_parts
 
     def _make_system_instruction(self):
+        if not self._send_native_video:
+            # Frames, not video: use the frame-by-frame instruction so the
+            # prompt matches what the model is actually shown.
+            return JointCriticSimfoundry._make_system_instruction(self)
 
         system_instruction = CRITIC_INSTRUCTION_SIMFOUNDRY_VIDEO
         if self.cfg.joint_critic.use_cotracker:
             system_instruction += CRITIC_COTRACKER_TRACE
 
-       
+
         system_instruction += (
             "\n## Examples \n \n Here are some examples of the evaluation of the realism of various joints\n"
             + JOINT_CRITIC_EXAMPLES
@@ -531,6 +550,19 @@ class JointCriticSimfoundryVideo(JointCriticSimfoundry):
         num_frames=8,
         video_encoding_strategy="individual",
     ):
+        if not self._send_native_video:
+            logging.info(
+                f"{self.cfg.model_name} does not accept video input; sampling "
+                f"{num_frames} frames from {pred_video_path} instead."
+            )
+            return JointCriticSimfoundry._make_prompt_parts(
+                self,
+                candidate_function_path=candidate_function_path,
+                prompt_path=prompt_path,
+                pred_video_path=pred_video_path,
+                num_frames=num_frames,
+                video_encoding_strategy=video_encoding_strategy,
+            )
 
         gt_image = [Image.open(prompt_path)]
         with open(prompt_path, "rb") as f:
