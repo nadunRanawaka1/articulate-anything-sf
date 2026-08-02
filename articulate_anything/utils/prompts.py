@@ -31,7 +31,7 @@ Guidelines:
 (4) Name parts in the singular (e.g. "drawer", not "drawers").
 (5) List only parts attached by a joint that actually moves; omit anything rigid or fixed.
 (6) Treat all remaining, non-moving geometry as one part called "base", which must not appear in part_list.
-(7) Ignore the foot pedal of a trash can — do not include it as a part.
+(7) Omit any parts that are smaller than 6 inches in every dimension (length, width, height), such as buttons, knobs, levers, etc.
 
 USER INPUT:
 Object: {object_name}
@@ -47,7 +47,6 @@ You are a careful assistant with a strong grasp of how articulated objects are c
 
 def generate_articulation_tree_known_parts(object_name, part_list):
 
-    # TODO: remove instructions about foot pedal.
     """
     Generate the articulation tree of an object from a set of images.
 
@@ -107,7 +106,7 @@ Guidelines:
 (3) Give joint_type as a single word drawn from that set — nothing else.
 (4) Form each link_name as part_name_link (for a part "Door", the link is "Door_link").
 (5) The part list names part types, not individual instances. When a type has several instances, give each a unique suffix and its own link — e.g. two doors become door_1 and door_2 (format: semantic_part_name_unique_id).
-(6) Ignore the foot pedal of a trash can — do not include it as a part.
+(6) Ignore parts that are smaller than 6 inches in every dimension (length, width, height), such as buttons, knobs, levers, etc.
 
 
 
