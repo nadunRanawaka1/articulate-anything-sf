@@ -40,6 +40,7 @@ mamba activate articulate-anything-partfield
 pip install psutil
 # pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126
 pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu128
+pip install "setuptools<80"
 pip install lightning==2.2 h5py yacs trimesh scikit-image loguru boto3
 pip install mesh2sdf tetgen pymeshlab plyfile einops libigl polyscope potpourri3d simple_parsing arrgh open3d
 # Must track the torch/CUDA pair pinned above.
