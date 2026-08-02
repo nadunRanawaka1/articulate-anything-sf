@@ -461,6 +461,12 @@ def process_single_object(cfg, object_config, reference_object_name: str = None)
     s5_cfg.dummy_urdf_path = urdf_path
     s5_cfg.object_image_path = object_config['image_path']
     s5_cfg.mesh_parts_dir = f"{s4_cfg.out_dir}/meshes"
+    # Scene-level VLM settings also apply to step 5, unless s5_articulate
+    # overrides them. Without this, a scene on `vlm_backend: anthropic` would
+    # still send the joint actor/critic to whatever the articulation config
+    # says (Vertex by default).
+    s5_cfg.vlm_backend = s5_cfg.get('vlm_backend', None) or cfg.get('vlm_backend', None)
+    s5_cfg.claude_location = s5_cfg.get('claude_location', None) or cfg.get('claude_location', None)
     
     if Path(f"{s5_cfg.out_dir}/{s5_cfg.object_name}/mobility_final.urdf").exists() and not s5_cfg.rerun:
         step_timings['Step 5: Articulate'] = 0.0  # Skipped
