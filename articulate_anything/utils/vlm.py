@@ -11,6 +11,10 @@ from openai import OpenAI
 from PIL import Image as PILImage
 import torch
 
+from articulate_anything.utils.remote_retry import (
+    RemoteCallFailed,
+    handle_remote_exception,
+)
 from articulate_anything.utils.utils import assert_valid_key
 from articulate_anything.utils.prompt_utils import (
     CLAUDE_VERSIONS,
@@ -201,11 +205,12 @@ class Gemini(VLM_API):
         )
 
         result = None
-        for i in range(n_retries):
-            if result is not None:
-                break
+        # Budget grows if we hit 429s; see remote_retry.handle_remote_exception.
+        budget = n_retries
+        i = 0
+        while i < budget:
             if self.verbose:
-                print(f"Querying Gemini [{self.model}]: attempt {i + 1} of {n_retries}...")
+                print(f"Querying Gemini [{self.model}]: attempt {i + 1} of {budget}...")
             _result = []
             try:
                 for chunk in self.client.models.generate_content_stream(
@@ -217,9 +222,13 @@ class Gemini(VLM_API):
                         print(chunk.text, end="")
                     _result.append(chunk)
                 result = _result
+                break
             except Exception as e:
-                print(f"\nFailed attempt {i + 1} of {n_retries}: {e}")
-                print(f"\nFailed attempt {i + 1} of {n_retries}")
+                budget = handle_remote_exception(
+                    e, attempt=i, n_retries=budget,
+                    provider="Gemini", model=self.model,
+                )
+            i += 1
 
         print()
         return result
@@ -352,10 +361,13 @@ class Claude(VLM_API):
             kwargs["temperature"] = temperature
 
         last_error = None
-        for i in range(n_retries):
+        # Budget grows if we hit 429s; see remote_retry.handle_remote_exception.
+        budget = n_retries
+        i = 0
+        while i < budget:
             if self.verbose:
                 print(f"Querying Claude [{self.model}]: attempt {i + 1} of "
-                      f"{n_retries}...")
+                      f"{budget}...")
             try:
                 result = claude_stream_message(
                     self.client, kwargs, print_results=print_results)
@@ -364,10 +376,14 @@ class Claude(VLM_API):
                 return result
             except Exception as e:
                 last_error = e
-                print(f"\nFailed attempt {i + 1} of {n_retries}: {e}")
+                budget = handle_remote_exception(
+                    e, attempt=i, n_retries=budget,
+                    provider="Claude", model=self.model,
+                )
+            i += 1
 
-        raise RuntimeError(
-            f"Claude [{self.model}] failed after {n_retries} attempts"
+        raise RemoteCallFailed(
+            f"Claude [{self.model}] failed after {budget} attempts"
         ) from last_error
 
     def get_result_text(self, result):
@@ -549,10 +565,11 @@ class GPT(VLM_API):
             assert_valid_key(key=image_shape, valid_keys=self.IMAGE_SHAPES, name="image shape")
 
             result = None
-            for i in range(n_retries):
-                if result is not None:
-                    break
-                print(f"Querying GPT [{self.model}]: {i + 1} of {n_retries}...")
+            # Budget grows if we hit 429s; see remote_retry.handle_remote_exception.
+            budget = n_retries
+            i = 0
+            while i < budget:
+                print(f"Querying GPT [{self.model}]: {i + 1} of {budget}...")
                 try:
                     result = self.client.images.edit(
                         model=self.model,
@@ -566,8 +583,13 @@ class GPT(VLM_API):
                         background="auto",
                         # moderation="auto",
                     )
-                except:
-                    print(f"Failed attempt {i + 1} of {n_retries}")
+                    break
+                except Exception as e:
+                    budget = handle_remote_exception(
+                        e, attempt=i, n_retries=budget,
+                        provider="GPT", model=self.model,
+                    )
+                i += 1
 
             if print_results and result is not None:
                 for dat in result.data:

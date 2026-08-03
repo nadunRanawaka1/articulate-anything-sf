@@ -5,7 +5,7 @@ additional_prompt: null
 modality: "image"
 out_dir: "results/default_cabinet"
 # dataset_dir: "datasets/partnet-mobility-v0/dataset"
-dataset_dir: "path/to/DATA/workspace/articulate_anything/partnet-mobility-v0-processed/partnet-mobility-v0/dataset"
+dataset_dir: "datasets/partnet-mobility-v0-processed/partnet-mobility-v0/dataset"
 api_key: null
 gcloud_project: ${oc.env:GCLOUD_PROJECT}
 gcloud_location: us-west1

@@ -1442,12 +1442,16 @@ def partnet_10383(input_dir, links, joint_id="joint_1") -> Robot:
         global_axis=global_axis,
         hint_point=screen_vertices[2],  # Front-Left-Bottom (FLB)
     )
+    # The lid in this scan is ALREADY partly open, so angle 0 is not the shut position.
+    # Reading the rest pose off the image: shut is about +50 from here, and the lid swings
+    # roughly 110 further open in the other direction. Hence an asymmetric range straddling 0.
+    # Writing `0 ... 135` here would be the classic mistake - it assumes the scan starts shut.
     pred_robot.make_revolute_joint(
         "screen",
         "laptop_base",
         global_axis=global_axis,
-        lower_angle_deg=0,
-        upper_angle_deg=135,  # open up
+        lower_angle_deg=-109.5,  # fully open
+        upper_angle_deg=50.0,  # shut against the base
         pivot_point=pivot_point,
     )
     return pred_robot

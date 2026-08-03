@@ -134,8 +134,32 @@ def merge_mesh_parts(cfg: DictConfig, parts_list, verbose: bool = False):
             print(f"Loading cached merge result from: {cache_path}")
         return json.load(open(cache_path))
     
-    image_dir = cfg.image_dir + "/original_colors" # TODO: move to cfg or cleanup the codebase
-    image_paths = [os.path.join(image_dir, f) for f in os.listdir(image_dir) if f.endswith(tuple(IMAGE_EXTENSIONS))]
+    # Which render variant the merge sees. Both variants carry the same numeric tags and leader
+    # lines; they differ only in surface colour:
+    #   "segmented" (cfg.image_dir)        - each primitive a flat distinct colour, so its
+    #                                        extent, boundary and relative size are visible
+    #   "original_colors" (subdirectory)   - the object's true appearance
+    # The merge question is "which primitives belong to the same part?", which is about regions
+    # and adjacency. On a dark or uniformly coloured object the original-colour render shows the
+    # tags but not the regions, so the model is asked about areas while looking at points.
+    # Default to "segmented"; set merge_render_variant to override.
+    variant = cfg.get("merge_render_variant", "segmented")
+    image_dir = cfg.image_dir if variant == "segmented" else os.path.join(cfg.image_dir, variant)
+    if not os.path.isdir(image_dir):
+        raise FileNotFoundError(
+            f"merge_render_variant='{variant}' resolved to '{image_dir}', which does not exist. "
+            f"Expected 'segmented' (renders directly in {cfg.image_dir}) or a subdirectory name "
+            f"such as 'original_colors'."
+        )
+    image_paths = sorted(
+        os.path.join(image_dir, f)
+        for f in os.listdir(image_dir)
+        if f.endswith(tuple(IMAGE_EXTENSIONS))
+    )
+    if not image_paths:
+        raise FileNotFoundError(f"No renders found in '{image_dir}' for the part merge.")
+    if verbose:
+        print(f"  Merge renders: {len(image_paths)} from '{variant}' ({image_dir})")
     user_prompt, system_prompt = merge_parts(cfg.object_name, parts_list)
 
     model = make_vlm(cfg, verbose=verbose)

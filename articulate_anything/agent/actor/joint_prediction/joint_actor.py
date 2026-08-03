@@ -169,6 +169,20 @@ Important points:
 
 - **CRITICAL: DO NOT comment out or remove the fixed joints from the link placement code.** The `make_revolute_joint`, `make_prismatic_joint`, and `make_continuous_joint` functions have `force_overwrite=True` by default, which automatically replaces the existing fixed joint with the new joint type. If you comment out a fixed joint, the link becomes disconnected from the robot and will cause a crash.
 - Make sure that for revolute joint, lower_angle_deg < upper_angle_deg.
+- **CRITICAL: angle 0 is the pose the mesh is ALREADY IN, which is usually NOT the closed pose.**
+  These meshes are reconstructed from video or images, so a part is captured in whatever position
+  it happened to be in - a laptop lid propped open, a door ajar, a drawer half out. Do not assume
+  the object starts closed and opens from there.
+  - **Read the rest pose off the provided images before choosing limits.** If the lid in the image
+    is already open, then `0` is *open*, and closing it means moving to a **positive or negative
+    angle you must estimate from the image** - not to `0`.
+  - Worked example: a laptop whose lid is photographed ~115 degrees open, hinged so that positive
+    rotation closes it, is shut near `+115` and fully open near `-20`. Correct limits are about
+    `lower_angle_deg=-20, upper_angle_deg=115`. Writing `lower_angle_deg=-120, upper_angle_deg=0`
+    would be wrong: it never closes the lid, it only swings it further open, through the table.
+  - Symmetric guesses such as `lower_angle_deg=-150, upper_angle_deg=150` are always wrong. Real
+    hinges have a hard stop where the part seats against its parent, and a range of motion that is
+    physically reachable. State a range you can justify from the images.
 - If you're given a video or image of the groundtruth object joint, make sure to study the provided input carefully to understand the correct behavior of the object joint.
 - Do not make joints whose direct parent is `base`. For example, `make_revolute_joint("link1", "base",...)` is not a good practice. Instead,
     consider making joints between two non-base links. 

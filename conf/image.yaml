@@ -3,7 +3,7 @@ additional_prompt: null
 modality: "image"
 out_dir: "results"
 # dataset_dir: "datasets/partnet-mobility-v0/dataset"
-dataset_dir: "path/to/DATA/workspace/articulate_anything/partnet-mobility-v0-processed/partnet-mobility-v0/dataset"
+dataset_dir: "datasets/partnet-mobility-v0-processed/partnet-mobility-v0/dataset"
 api_key: null
 gcloud_project: ${oc.env:GCLOUD_PROJECT}
 gcloud_location: us-west1
@@ -21,7 +21,10 @@ gen_config:
 render_part_views: false
 
 actor_critic:
-  actor_only: true
+  # The critic's rubric has an explicit `joint_limit` category ("Incorrect joint limit based on
+  # OBSERVED range/direction"), which is the failure mode seen on reconstructed assets. It has
+  # never run on this path. Set true to skip it.
+  actor_only: false
   start_seed: 0
   num_seeds: 1
   start_iter: 0
