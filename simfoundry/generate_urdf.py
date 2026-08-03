@@ -176,41 +176,41 @@ def generate_base_urdf(cfg: DictConfig, articulation_tree_dict: dict, verbose: b
         child_link = joint['child_link']
         
         if verbose:
-            print(f"  Joint '{joint_name}': {joint_type} ({parent_link} -> {child_link})")
-        
-        joint_elem = ET.SubElement(root, 'joint', type=joint_type, name=joint_name)
+            print(f"  Joint '{joint_name}': {joint_type} -> emitted as fixed "
+                  f"({parent_link} -> {child_link})")
+
+        # Emit every scaffold joint as FIXED, whatever type was detected.
+        #
+        # This file builds the *input scaffold* for stage 5; the real joint - its
+        # type, axis, pivot and range - is what the joint actor is asked to predict.
+        # Emitting `revolute` here asserted three things this file cannot know, and
+        # supplied placeholders for all of them: axis (0,0,1) and limits +/-pi about
+        # a pivot at the origin.
+        #
+        # That placeholder was not inert. The renderer poses every movable joint at
+        # a limit before each stationary photo (`set_joint_to_target_limit`), so the
+        # scaffold was rendered at q = +pi: a point reflection that flipped the
+        # moving part upside down and dropped it by twice its height above the
+        # raise line - 26 mm for a laptop screen, 210 mm for a mailbox lid.
+        #
+        # A fixed joint has no movable DOF, so `get_manipulatable_joints` returns
+        # nothing, no qpos is ever written, and the scaffold renders in its true
+        # rest pose regardless of renderer config. This also matches the generated
+        # `link_placement.py`, which already declares every joint fixed.
+        #
+        # See docs/scaffold-render-pose.md.
+        joint_elem = ET.SubElement(root, 'joint', type='fixed', name=joint_name)
         ET.SubElement(joint_elem, 'parent', link=parent_link)
         ET.SubElement(joint_elem, 'child', link=child_link)
-        
+
         # Dummy origin
         ET.SubElement(joint_elem, 'origin', rpy="0.0 0.0 0.0", xyz="0.0 0.0 0.0")
-        
-        # Axis (default based on joint type)
-        if joint_type in ['revolute', 'prismatic', 'continuous']:
-            # Default to z-axis for revolute/continuous, z-axis for prismatic
-            if joint_type == 'prismatic':
-                ET.SubElement(joint_elem, 'axis', xyz="0 0 1")
-            else:  # revolute or continuous
-                ET.SubElement(joint_elem, 'axis', xyz="0 0 1")
-        elif joint_type == 'fixed':
-            # Fixed joints don't strictly need an axis, but include for completeness
-            ET.SubElement(joint_elem, 'axis', xyz="1 0 0")
-        
-        # Limits (only for revolute and prismatic)
-        if joint_type == 'revolute':
-            # Default revolute limits: -π to π
-            ET.SubElement(joint_elem, 'limit', 
-                         lower="-3.14159", upper="3.14159", 
-                         effort="100.0", velocity="1.0")
-        elif joint_type == 'prismatic':
-            # Default prismatic limits: -0.5m to 0.5m
-            ET.SubElement(joint_elem, 'limit', 
-                         lower="-0.5", upper="0.5", 
-                         effort="100.0", velocity="1.0")
-        elif joint_type == 'continuous':
-            # Continuous joints don't have limits but can have effort/velocity
-            ET.SubElement(joint_elem, 'limit', 
-                         effort="100.0", velocity="1.0")
+
+        # Fixed joints don't strictly need an axis, but include for completeness.
+        ET.SubElement(joint_elem, 'axis', xyz="1 0 0")
+
+        # No <limit>: a fixed joint has no range, and any value emitted here would
+        # be a guess that the renderer would then pose the part at.
     
     # Add fixed joint from base to root link
     if root_link_name:

@@ -127,17 +127,28 @@ def partnet_47645(input_dir, links):
     # we're rotating at an edge of the lid instead of the center
     lid_bb = pred_robot.get_bounding_boxes(["lid"], include_dim=False)["lid"]
     lid_vertices = compute_aabb_vertices(*lid_bb)
-    pivot_point = lid_vertices[0]  # Bottom-Back-Left
+
+    global_axis = [
+        0,
+        1,
+        0,
+    ]  # the lid of the treasure chest opens up and down so rotates along the left-right axis,
+    # which is the y-axis
+
+    # NOTE: an AABB corner is only ON the part when the part is axis-aligned. Pass it
+    # as `hint_point` (it says WHICH side/edge the hinge is on) and let
+    # `get_hinge_pivot` return the real pivot on the lid<->box contact edge.
+    pivot_point = pred_robot.get_hinge_pivot(
+        "lid",
+        "box_body",
+        global_axis=global_axis,
+        hint_point=lid_vertices[0],  # Bottom-Back-Left
+    )
 
     pred_robot.make_revolute_joint(
         "lid",
         "box_body",
-        global_axis=[
-            0,
-            1,
-            0,
-        ],  # the lid of the treasure chest opens up and down so rotates along the left-right axis,
-        # which is the y-axis
+        global_axis=global_axis,
         lower_angle_deg=-90,
         upper_angle_deg=0,  # opening upward
         pivot_point=pivot_point,
@@ -310,18 +321,26 @@ def partnet_103015(input_dir, links):
             window_link
         ]
         vertices = compute_aabb_vertices(*bbox)
-        pivot_point = vertices[
-            6
-        ]  # Top-Front-Left ## NOTE: need to tune this by visual feedback
+        global_axis = [
+            0,
+            1,
+            0,
+        ]  # this window opens up and down so rotates along the left-right axis,
+        # which is the y-axis
+        # AABB corner -> `hint_point` (which side); `get_hinge_pivot` returns the real
+        # pivot on the child<->parent contact edge
+        pivot_point = pred_robot.get_hinge_pivot(
+            window_link,
+            "window_frame",
+            global_axis=global_axis,
+            hint_point=vertices[
+                6
+            ],  # Top-Front-Left ## NOTE: need to tune this by visual feedback
+        )
         pred_robot.make_revolute_joint(
             window_link,
             "window_frame",
-            global_axis=[
-                0,
-                1,
-                0,
-            ],  # this window opens up and down so rotates along the left-right axis,
-            # which is the y-axis
+            global_axis=global_axis,
             lower_angle_deg=-90,
             upper_angle_deg=90,  # NOTE: the angle needs to be tuned by visual feedback as well
             pivot_point=pivot_point,
@@ -418,16 +437,24 @@ def partnet_40417(input_dir, links):
         door_bb = pred_robot.get_bounding_boxes(
             [door], include_dim=False)[door]
         door_vertices = compute_aabb_vertices(*door_bb)
-        pivot_point = door_vertices[3]
+        global_axis = [
+            0,
+            0,
+            1,
+        ]  # The cabinet door swings open and closed around the vertical axis,
+        # which is the z-axis.
+        # AABB corner -> `hint_point` (which side); `get_hinge_pivot` returns the real
+        # pivot on the child<->parent contact edge
+        pivot_point = pred_robot.get_hinge_pivot(
+            door,
+            "furniture_body",
+            global_axis=global_axis,
+            hint_point=door_vertices[3],
+        )
         pred_robot.make_revolute_joint(
             door,
             "furniture_body",
-            global_axis=[
-                0,
-                0,
-                1,
-            ],  # The cabinet door swings open and closed around the vertical axis,
-            # which is the z-axis.
+            global_axis=global_axis,
             lower_angle_deg=0,
             upper_angle_deg=90,
             pivot_point=pivot_point,
@@ -491,17 +518,26 @@ def partnet_41003(input_dir, links):
             door_link
         ]
         door_vertices = compute_aabb_vertices(*door_bb)
-        pivot_point = door_vertices[3]  # Bottom-Front-Right
+
+        global_axis = [
+            0,
+            0,
+            1,
+        ]  # The cabinet door swings open and closed around the vertical axis,
+        # which is the z-axis.
+        # AABB corner -> `hint_point` (which side); `get_hinge_pivot` returns the real
+        # pivot on the child<->parent contact edge
+        pivot_point = pred_robot.get_hinge_pivot(
+            door_link,
+            "furniture_body",
+            global_axis=global_axis,
+            hint_point=door_vertices[3],  # Bottom-Front-Right
+        )
 
         pred_robot.make_revolute_joint(
             door_link,
             "furniture_body",
-            global_axis=[
-                0,
-                0,
-                1,
-            ],  # The cabinet door swings open and closed around the vertical axis,
-            # which is the z-axis.
+            global_axis=global_axis,
             lower_angle_deg=0,
             upper_angle_deg=90,
             pivot_point=pivot_point,
@@ -720,13 +756,23 @@ def partnet_102318(input_dir, links):
     door_bb = pred_robot.get_bounding_boxes(
         ["door"], include_dim=False)["door"]
     door_vertices = compute_aabb_vertices(*door_bb)
-    pivot_point = door_vertices[1]  # Front-Right-Bottom
+
+    global_axis = [0, 0, 1]  # The safe door swings open and closed
+    # to the front and back like a door so along the fixed z-axis
+
+    # AABB corner -> `hint_point` (which side); `get_hinge_pivot` returns the real
+    # pivot on the child<->parent contact edge
+    pivot_point = pred_robot.get_hinge_pivot(
+        "door",
+        "safe_body",
+        global_axis=global_axis,
+        hint_point=door_vertices[1],  # Front-Right-Bottom
+    )
 
     pred_robot.make_revolute_joint(
         "door",
         "safe_body",
-        global_axis=[0, 0, 1],  # The safe door swings open and closed
-        # to the front and back like a door so along the fixed z-axis
+        global_axis=global_axis,
         lower_angle_deg=0,
         upper_angle_deg=90,  # open outward
         pivot_point=pivot_point,

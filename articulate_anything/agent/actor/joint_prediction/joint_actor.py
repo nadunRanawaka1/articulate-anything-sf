@@ -72,6 +72,31 @@ We have some helper functions that might be useful for you.
         #     force_overwrite (bool, optional): If True, overwrite existing joint.
         #     pivot_point (list, optional): The pivot point for the rotation in the world frame.
 
+    def get_hinge_pivot(self, child_link_name: str, parent_link_name: str, global_axis: List[float], hint_point: Optional[List[float]] = None) -> np.ndarray:
+        # Computes a revolute `pivot_point` from the REAL geometry of the two links.
+        # PREFERRED over indexing a corner of `compute_aabb_vertices(...)`: an AABB corner
+        # only lies on the part when the part is axis-aligned. For a part that is tilted in
+        # its rest pose (a laptop lid already propped open, a slanted door, an angled flap)
+        # the "back" and the "bottom" of the AABB are attained at OPPOSITE ends of the part,
+        # so the back-bottom corner is empty space; hinging there makes the part fly off its
+        # parent as the joint moves.
+        # The returned point lies on the child<->parent attachment edge, in the same world
+        # frame as `get_bounding_boxes`, so it is a drop-in replacement for an AABB vertex.
+
+        # Args:
+        #     child_link_name (str): Name of the moving link.
+        #     parent_link_name (str): Name of the static link it hinges on.
+        #     global_axis (list): The rotation axis in the world frame (the same vector
+        #                         you pass to `make_revolute_joint`).
+        #     hint_point (list, optional): A rough pivot - typically the
+        #                         `compute_aabb_vertices` corner you reasoned about. Keep
+        #                         supplying it: it carries the semantics ("back" vs "front",
+        #                         "left" vs "right") that geometry alone cannot recover, and
+        #                         it breaks ties when the contact region is a broad flat face.
+
+        # Returns:
+        #     numpy.ndarray: A 3-element pivot point in the world frame.
+
     def make_prismatic_joint(self, child_link_name: str, parent_link_name: str, global_lower_point: List[float], global_upper_point: List[float], force_overwrite: bool = True) -> None:
         # Creates or updates a prismatic joint between the specified child and parent links.
 
@@ -110,7 +135,12 @@ and are not bound to any particular class.
 
         # Returns:
         # numpy.ndarray: An 8x3 array where each row represents the coordinates of a vertex.
-        # The vertices are ordered as follows:
+        # The vertices are ordered as follows. IMPORTANT: these eight labels describe the
+        # BOX, not the part. They are corners of the axis-aligned bounding box, and each
+        # one splices together three extremes (min/max x, min/max y, min/max z) that are in
+        # general attained at three DIFFERENT points of the mesh. A corner therefore lies on
+        # the part only when the part is itself a world-axis-aligned box; for a tilted part
+        # it is a point the geometry never occupies.
         # 0: Back-Left-Bottom (BLB)
         # 1: Back-Right-Bottom (BRB)
         # 2: Front-Left-Bottom (FLB)
@@ -119,8 +149,13 @@ and are not bound to any particular class.
         # 5: Back-Right-Top (BRT)
         # 6: Front-Left-Top (FLT)
         # 7: Front-Right-Top (FRT)
+        #
+        # These corners remain the right tool for SEMANTICS - they tell you which side
+        # ("back", "left", "top") the hinge is on. For a revolute `pivot_point`, pass the
+        # corner to `pred_robot.get_hinge_pivot(..., hint_point=corner)` and use its return
+        # value; do NOT pass a raw corner as `pivot_point`.
 
-```   
+```
 """
 
 
@@ -143,6 +178,9 @@ Important points:
     - y: right -- positive y, left -- negative y
     - z: up -- positive z, down -- negative z
 - When applicable, pay close attention to the relationship between pivot points and joint axis as demonstrated in the provided examples.
+- **For a revolute `pivot_point`, do NOT pass a raw `compute_aabb_vertices` corner.** Use the corner to express *which side* the hinge is on and pass it through
+    `pivot_point = pred_robot.get_hinge_pivot(child, parent, global_axis=global_axis, hint_point=corner)`, as the examples show. An AABB corner is only on the part
+    when the part is axis-aligned; on a tilted part (an already-open laptop lid, a slanted door) it sits in empty space and the part detaches from its parent when the joint sweeps.
 - When feedback is provided, pay close attention to `improvement_suggestion` and modify the code accordingly.
 - Only include this import statement `from articulate_anything.api.odio_urdf import *`. Remove any other import statements.
 - Your return format is

@@ -298,7 +298,13 @@ def set_joint_to_target_limit(robot, joint_move_dir):
 
     for joint_idx, (joint_name, joint_type, (lower_limit, upper_limit)) in enumerate(manipulatable_joints):
         if joint_move_dir == "auto":
-            target_limit = upper_limit if lower_limit < 0 else lower_limit
+            # Prefer the rest pose (q = 0) whenever the joint's range reaches it.
+            # Kept in sync with sapien_simulate_simfoundry.py; see that file and
+            # docs/scaffold-render-pose.md for the reasoning.
+            if lower_limit <= 0.0 <= upper_limit:
+                target_limit = 0.0
+            else:
+                target_limit = upper_limit if lower_limit < 0 else lower_limit
         elif joint_move_dir == "move_up":
             target_limit = lower_limit
         elif joint_move_dir == "move_down":

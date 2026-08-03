@@ -7,6 +7,13 @@ trap 'echo ""; echo "ERROR: Command failed at line $LINENO: $BASH_COMMAND"; exit
 
 eval "$(mamba shell hook --shell bash)"
 
+# ==============================================================================
+# SYSTEM DEPENDENCIES (run first)
+# ==============================================================================
+echo "=== Installing system dependencies (this step may prompt for your sudo password) ==="
+sudo -v
+sudo apt-get install -y libx11-6 libgl1 libxrender1
+
 
 if [ ! -d "deps" ]; then
   mkdir deps
@@ -48,7 +55,6 @@ pip install mesh2sdf tetgen pymeshlab plyfile einops libigl polyscope potpourri3
 pip install torch-scatter -f https://data.pyg.org/whl/torch-2.7.0+cu128.html
 pip install packaging
 pip install ninja
-sudo apt install libx11-6 libgl1 libxrender1
 pip install vtk
 pip install flash-attn --no-build-isolation
 pip install huggingface_hub timm omegaconf

@@ -90,7 +90,7 @@ def setup_sapien(cfg):
             os.path.dirname(cfg.urdf.file), "raise_distances.json")
 
     if not os.path.exists(cfg.urdf.raise_distance_file):
-        # NOTE: Couldn't figure out how to correctly compute the raise distance
+        # NOTE: unclear how to correctly compute the raise distance
         # in sapien so we'll use pybullet to compute it
         client, robot_id = setup_pybullet(
             cfg.urdf.file)
@@ -406,7 +406,16 @@ def set_joint_to_target_limit(robot, joint_move_dir):
 
     for joint_idx, (joint_name, joint_type, (lower_limit, upper_limit)) in enumerate(manipulatable_joints):
         if joint_move_dir == "auto":
-            target_limit = upper_limit if lower_limit < 0 else lower_limit
+            # Prefer the rest pose (q = 0) whenever the joint's range reaches it.
+            #
+            # This is a no-op for ranges that start at 0 (0..90) or end at 0
+            # (-90..0), which is most of them. It changes only ranges that
+            # straddle zero (-90..90, -20..70), where posing at a limit showed the
+            # part at an extreme rather than at rest. See docs/scaffold-render-pose.md.
+            if lower_limit <= 0.0 <= upper_limit:
+                target_limit = 0.0
+            else:
+                target_limit = upper_limit if lower_limit < 0 else lower_limit
         elif joint_move_dir == "move_up":
             target_limit = lower_limit
         elif joint_move_dir == "move_down":

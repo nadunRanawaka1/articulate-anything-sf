@@ -359,7 +359,13 @@ def compute_aabb_vertices(
 
     Returns:
     numpy.ndarray: An 8x3 array where each row represents the coordinates of a vertex.
-    The vertices are ordered as follows:
+    The vertices are ordered as follows.
+
+    IMPORTANT - these eight labels describe the *box*, not the *part*. Each corner
+    splices together three independent extremes (min/max x, min/max y, min/max z)
+    that are in general attained at three *different* points of the mesh, so a
+    corner lies on the part only when the part is itself a world-axis-aligned box:
+
     0: Back-Left-Bottom (BLB)
     1: Back-Right-Bottom (BRB)
     2: Front-Left-Bottom (FLB)
@@ -368,6 +374,25 @@ def compute_aabb_vertices(
     5: Back-Right-Top (BRT)
     6: Front-Left-Top (FLT)
     7: Front-Right-Top (FRT)
+
+    Read "Back-Left-Bottom" as "the corner of the box that is at the back, the left
+    and the bottom", NOT as "the back-left-bottom of the part". For a tilted part
+    (an already-open laptop lid, a slanted door) the two readings differ.
+
+    Measured, for a part hinged at its own back-bottom edge: through the whole
+    closed-to-upright range the corner tracks the true hinge to within the part's
+    thickness (<= 4mm on a 400x300x4mm lid). It only breaks once the part leans
+    back PAST vertical - only then do min(y) and min(z) land on opposite ends of
+    the part - after which the error grows as L*|cos(theta)| and is unbounded in
+    practice (135mm at 116 degrees open, 215mm at 135). A reconstructed asset is
+    routinely in exactly that regime; a canonically-authored one never is.
+
+    WARNING: because of the above, these corners are not points on the mesh. Using
+    one as a revolute `pivot_point` puts the hinge far away from the real geometry.
+    Use `Robot.get_hinge_pivot(child, parent, global_axis, hint_point=corner)` to
+    turn a corner into a real hinge location (see `PIVOT_SNAP_*` in this module).
+    The corner is still the right way to say *which side* the hinge is on, which is
+    exactly what `hint_point` is for.
     """
     x_min, y_min, z_min = aabb_min
     x_max, y_max, z_max = aabb_max
@@ -386,6 +411,170 @@ def compute_aabb_vertices(
     )
 
     return vertices
+
+
+# ---------------------------------------------------------------------------
+# Hinge-pivot geometry
+# ---------------------------------------------------------------------------
+# A revolute joint is defined by a *line* (axis + a point on it), so only the
+# component of `pivot_point` perpendicular to the axis has any geometric effect.
+# These constants control when a supplied pivot is considered "not on the part"
+# and is therefore snapped onto the real child<->parent attachment geometry.
+PIVOT_SNAP_TOLERANCE_FRACTION = 0.05  # of the child's bounding-box diagonal
+PIVOT_SNAP_TOLERANCE_MIN = 0.01       # metres; must exceed PyBullet's AABB margin (~3mm)
+# Surface sampling resolution, as a fraction of the child's bounding-box diagonal.
+PIVOT_SAMPLE_SPACING_FRACTION = 0.002
+PIVOT_SAMPLE_CAP = 200_000
+# A child surface point counts as "attached" when it is within this fraction of
+# the child's diagonal of the closest child<->parent distance.
+PIVOT_CONTACT_BAND_FRACTION = 0.01
+# Thickness (as a fraction of the child's diagonal) of the outer slice of the
+# attachment region that is treated as "the hinge edge".
+PIVOT_EDGE_BAND_FRACTION = 0.005
+
+
+def perpendicular_basis(axis: Union[List[float], np.ndarray]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Builds an orthonormal frame (axis_hat, e1, e2) where e1, e2 span the plane
+    perpendicular to `axis`.
+
+    Returns:
+        tuple: (axis_hat, e1, e2) as unit numpy arrays.
+    """
+    a = np.asarray(axis, dtype=float).reshape(3)
+    norm = np.linalg.norm(a)
+    if norm < 1e-12:
+        raise ValueError("Joint axis must be a non-zero vector.")
+    a = a / norm
+    ref = np.eye(3)[int(np.argmin(np.abs(a)))]
+    e1 = ref - a * float(a @ ref)
+    e1 = e1 / np.linalg.norm(e1)
+    e2 = np.cross(a, e1)
+    return a, e1, e2
+
+
+def sample_mesh_surface(mesh: "trimesh.Trimesh", spacing: float,
+                        cap: int = PIVOT_SAMPLE_CAP) -> np.ndarray:
+    """
+    Returns a dense, roughly uniform point cloud of a mesh's surface.
+
+    Mesh vertices alone are not usable for proximity queries: a coarse mesh (a
+    box has 8 vertices) has huge empty stretches between vertices, so a
+    point-to-point distance badly overestimates the true surface distance.
+    We therefore area-sample the faces at a target `spacing` and add the
+    original vertices (which carry the sharp edges/corners).
+    """
+    verts = np.asarray(mesh.vertices, dtype=float)
+    n_samples = int(np.clip(float(mesh.area) / max(spacing ** 2, 1e-12), 2000, cap))
+    try:
+        samples, _ = trimesh.sample.sample_surface(mesh, n_samples, seed=0)
+    except TypeError:  # older trimesh without `seed`
+        samples, _ = trimesh.sample.sample_surface(mesh, n_samples)
+    return np.vstack([verts, np.asarray(samples, dtype=float)])
+
+
+def compute_hinge_pivot_from_points(
+    child_points: np.ndarray,
+    parent_points: np.ndarray,
+    axis: Union[List[float], np.ndarray],
+    hint_point: Optional[Union[List[float], np.ndarray]] = None,
+) -> np.ndarray:
+    """
+    Locates a revolute hinge from the actual geometry of two parts.
+
+    A hinge lives where the moving part is *attached* to the static part, at the
+    outer edge of that attachment. Concretely:
+
+      1. The attachment ("contact") region is the set of child surface points
+         that are closest to the parent surface.
+      2. Working in the plane perpendicular to `axis` (the only plane that
+         matters for a revolute joint), the hinge is the extremity of that
+         contact region measured away from the body of the child - i.e. the
+         edge the child pivots on rather than the middle of the overlap.
+      3. If the contact footprint is a broad strip/face (e.g. a flat lid resting
+         on a flat box), its long direction carries no information about where
+         along it the hinge sits. In that case `hint_point` (typically the
+         bounding-box corner the VLM reasoned about, which encodes "back" vs
+         "front", "left" vs "right") decides, and the geometry only fixes the
+         remaining coordinate.
+
+    Unlike an axis-aligned bounding-box corner, the result is guaranteed to lie
+    on real geometry, so it is correct for tilted parts as well as upright ones.
+
+    Args:
+        child_points (np.ndarray): (N, 3) surface points of the moving part.
+        parent_points (np.ndarray): (M, 3) surface points of the static part.
+        axis (list): The rotation axis (same frame as the points).
+        hint_point (list, optional): Approximate/desired pivot, used to
+            disambiguate and to set the (geometrically irrelevant) coordinate
+            along the axis.
+
+    Returns:
+        np.ndarray: A 3-element pivot point in the frame of the input points.
+    """
+    from scipy.spatial import cKDTree
+
+    axis_hat, e1, e2 = perpendicular_basis(axis)
+    basis = np.stack([e1, e2])
+
+    child = np.asarray(child_points, dtype=float)
+    parent = np.asarray(parent_points, dtype=float)
+    scale = float(np.linalg.norm(child.max(axis=0) - child.min(axis=0)))
+    if scale <= 0:
+        raise ValueError("Child geometry is degenerate (zero extent).")
+
+    # 1. contact region: child points closest to the parent surface
+    distances, _ = cKDTree(parent).query(child, workers=-1)
+    band = distances.min() + max(PIVOT_CONTACT_BAND_FRACTION * scale, 1e-4)
+    mask = distances <= band
+    if mask.sum() < 20:  # degenerate/very sparse contact -> take the closest 0.5%
+        mask = distances <= np.quantile(distances, 0.005)
+    contact = child[mask]
+
+    child_2d = child @ basis.T
+    contact_2d = contact @ basis.T
+
+    # 2. "outward" direction: from the body of the child towards its attachment
+    outward = contact_2d.mean(axis=0) - child_2d.mean(axis=0)
+    norm = np.linalg.norm(outward)
+    outward = outward / norm if norm > 1e-9 else np.array([1.0, 0.0])
+
+    # 3. degeneracy guard for broad, flat contact footprints
+    centred = contact_2d - contact_2d.mean(axis=0)
+    if len(centred) >= 3:
+        singular_values, right_vectors = np.linalg.svd(centred, full_matrices=False)[1:]
+        principal = right_vectors[0]
+        if singular_values[0] > 3.0 * max(singular_values[1], 1e-12):
+            projected = outward - principal * float(outward @ principal)
+            projected_norm = np.linalg.norm(projected)
+            if projected_norm > 1e-6:
+                outward = projected / projected_norm
+            else:
+                candidate = np.array([-principal[1], principal[0]])
+                sign = float(candidate @ (contact_2d.mean(axis=0) - child_2d.mean(axis=0)))
+                outward = candidate * (1.0 if sign >= 0 else -1.0)
+
+    scores = contact_2d @ outward
+    # Absolute (not percentile) band width: a percentile would always keep the
+    # top N% of points, so when the contact is flat along `outward` it would
+    # latch onto sub-micron numerical noise instead of the whole flat face.
+    # `quantile(0.999)` is only used as an outlier-resistant stand-in for max().
+    robust_max = float(np.quantile(scores, 0.999)) if len(scores) >= 1000 \
+        else float(scores.max())
+    threshold = robust_max - max(PIVOT_EDGE_BAND_FRACTION * scale, 1e-4)
+    edge_mask = scores >= threshold
+    edge_2d = contact_2d[edge_mask]
+
+    if hint_point is not None:
+        hint = np.asarray(hint_point, dtype=float).reshape(3)
+        hint_2d = hint @ basis.T
+        chosen = edge_2d[int(np.argmin(np.linalg.norm(edge_2d - hint_2d, axis=1)))]
+        along_axis = float(hint @ axis_hat)
+    else:
+        chosen = edge_2d.mean(axis=0)
+        along_axis = float((contact[edge_mask] @ axis_hat).mean())
+
+    return chosen[0] * e1 + chosen[1] * e2 + along_axis * axis_hat
 
 
 def world_to_local(
@@ -657,6 +846,215 @@ class Robot(NamedElement):
             link_aabbs[parent_link_name][0],
             link_aabbs[parent_link_name][1],
         )
+
+    def _get_link_surface_points(
+        self, link_name: str, robot_id: int, spacing: float
+    ) -> Optional[np.ndarray]:
+        """
+        Returns a dense point cloud of a link's visual meshes, expressed in the
+        same world/simulator frame that `get_bounding_boxes` reports AABBs in.
+
+        Returns None when the link has no loadable mesh geometry.
+        """
+        links = self.get_links()
+        if link_name not in links:
+            raise ValueError(f"Link '{link_name}' not found in the robot.")
+        link = links[link_name]
+
+        link_index = get_link_index_by_name(robot_id, link_name)
+        if link_index is None:
+            raise ValueError(f"Link '{link_name}' not found in the simulator.")
+        if link_index == -1:
+            link_pos, link_orn = p.getBasePositionAndOrientation(robot_id)
+        else:
+            state = p.getLinkState(robot_id, link_index)
+            # indices 4/5 are the URDF link frame, which is what <visual><origin>
+            # is expressed relative to (0/1 are the inertial/CoM frame).
+            link_pos, link_orn = state[4], state[5]
+        link_rotation = R.from_quat(link_orn)
+        link_pos = np.asarray(link_pos, dtype=float)
+
+        clouds = []
+        for visual in link.get_named_elements("Visual"):
+            geometries = visual.get_named_elements("Geometry")
+            if not geometries:
+                continue
+            meshes = geometries[0].get_named_elements("Mesh")
+            if not meshes or "filename" not in meshes[0].attributes:
+                continue
+
+            filename = meshes[0].filename
+            mesh_path = filename if os.path.isabs(filename) else join_path(
+                self.input_dir, filename)
+            if not os.path.exists(mesh_path):
+                logging.debug(f"Mesh not found for '{link_name}': {mesh_path}")
+                continue
+            try:
+                mesh = trimesh.load(mesh_path, force="mesh", process=False)
+            except Exception as exc:  # pragma: no cover - depends on asset files
+                logging.debug(f"Could not load mesh {mesh_path}: {exc}")
+                continue
+            if not hasattr(mesh, "vertices") or len(mesh.vertices) == 0:
+                continue
+
+            points = sample_mesh_surface(mesh, spacing)
+
+            if "scale" in meshes[0].attributes:
+                mesh_scale = np.array(
+                    [float(s) for s in str(meshes[0].scale).split()], dtype=float)
+                points = points * mesh_scale
+
+            origins = visual.get_named_elements("Origin")
+            if origins:
+                origin_xyz = np.array(
+                    [float(v) for v in origins[0].xyz.split()], dtype=float)
+                rpy_attr = getattr(origins[0], "rpy", None)
+                origin_rpy = np.array(
+                    [float(v) for v in rpy_attr.split()], dtype=float
+                ) if rpy_attr else np.zeros(3)
+            else:
+                origin_xyz = np.zeros(3)
+                origin_rpy = np.zeros(3)
+
+            points = R.from_euler("xyz", origin_rpy).apply(points) + origin_xyz
+            clouds.append(link_rotation.apply(points) + link_pos)
+
+        if not clouds:
+            return None
+        return np.vstack(clouds)
+
+    @pybullet_session
+    def get_hinge_pivot(
+        self,
+        child_link_name: str,
+        parent_link_name: str,
+        global_axis: List[float],
+        hint_point: Optional[List[float]] = None,
+        client=None,
+        robot_id=None,
+    ) -> np.ndarray:
+        """
+        Computes a revolute `pivot_point` from the real geometry of the two links.
+
+        Use this instead of picking a corner of `compute_aabb_vertices(...)`: an
+        AABB corner is only on the part when the part is axis-aligned. For a part
+        that is tilted in its rest pose (an open laptop lid, a slanted door, an
+        angled hopper flap) the "back" and "bottom" of the AABB are opposite ends
+        of the part, so the back-bottom corner is empty space and using it as a
+        hinge makes the part fly off its parent when the joint moves.
+
+        The returned point lies on the child<->parent attachment edge and is in
+        the same world/simulator frame as `get_bounding_boxes`, so it is a
+        drop-in replacement for an AABB vertex.
+
+        Args:
+            child_link_name (str): Name of the moving link.
+            parent_link_name (str): Name of the static link it hinges on.
+            global_axis (list): The rotation axis in the world frame (the same
+                vector you pass to `make_revolute_joint`).
+            hint_point (list, optional): A rough pivot - typically the
+                `compute_aabb_vertices` corner you reasoned about. It is used to
+                pick a side when the geometry alone is ambiguous (e.g. a flat lid
+                lying on a flat box could hinge at any of its four edges).
+
+        Returns:
+            numpy.ndarray: A 3-element pivot point in the world frame.
+
+        Example:
+            >>> lid_bb = pred_robot.get_bounding_boxes(["lid"])["lid"]
+            >>> lid_vertices = compute_aabb_vertices(*lid_bb)
+            >>> pivot_point = pred_robot.get_hinge_pivot(
+            ...     "lid", "box_body", global_axis=[0, -1, 0],
+            ...     hint_point=lid_vertices[0],  # Back-Left-Bottom
+            ... )
+        """
+        if parent_link_name == "base" and "base_helper" in self.get_links():
+            parent_link_name = "base_helper"
+
+        child_aabb = get_aabb(robot_id, [child_link_name])[child_link_name]
+        scale = float(np.linalg.norm(
+            np.asarray(child_aabb[1], dtype=float) - np.asarray(child_aabb[0], dtype=float)))
+        spacing = max(PIVOT_SAMPLE_SPACING_FRACTION * scale, 1e-5)
+
+        child_points = self._get_link_surface_points(
+            child_link_name, robot_id, spacing)
+        parent_points = self._get_link_surface_points(
+            parent_link_name, robot_id, spacing)
+        if child_points is None or parent_points is None:
+            raise ValueError(
+                "Cannot compute a hinge pivot: missing mesh geometry for "
+                f"'{child_link_name}' or '{parent_link_name}'."
+            )
+
+        return compute_hinge_pivot_from_points(
+            child_points, parent_points, global_axis, hint_point=hint_point
+        )
+
+    @pybullet_session
+    def _snap_pivot_to_hinge(
+        self,
+        child_link_name: str,
+        parent_link_name: str,
+        global_axis: List[float],
+        pivot_point: List[float],
+        client=None,
+        robot_id=None,
+    ) -> np.ndarray:
+        """
+        Validates a caller-supplied `pivot_point` against the child's real
+        geometry and repairs it only when it is clearly wrong.
+
+        Because a revolute joint is a *line*, only the component of the pivot
+        perpendicular to the axis matters. If that perpendicular offset from the
+        child's surface is within tolerance the pivot is returned untouched
+        (bit-for-bit), so upright/axis-aligned parts - where an AABB corner really
+        does sit on the mesh - keep their current behaviour exactly. Only a pivot
+        floating in empty space is snapped onto the child<->parent hinge edge.
+
+        Any failure (missing meshes, degenerate geometry, ...) leaves the pivot
+        unchanged.
+        """
+        pivot = np.asarray(pivot_point, dtype=float).reshape(3)
+
+        child_aabb = get_aabb(robot_id, [child_link_name])[child_link_name]
+        scale = float(np.linalg.norm(
+            np.asarray(child_aabb[1], dtype=float) - np.asarray(child_aabb[0], dtype=float)))
+        if scale <= 0:
+            return pivot
+        spacing = max(PIVOT_SAMPLE_SPACING_FRACTION * scale, 1e-5)
+
+        child_points = self._get_link_surface_points(
+            child_link_name, robot_id, spacing)
+        if child_points is None:
+            return pivot
+
+        axis_hat, e1, e2 = perpendicular_basis(global_axis)
+        basis = np.stack([e1, e2])
+        offset = float(np.min(np.linalg.norm(
+            child_points @ basis.T - pivot @ basis.T, axis=1)))
+
+        tolerance = max(PIVOT_SNAP_TOLERANCE_FRACTION * scale,
+                        PIVOT_SNAP_TOLERANCE_MIN)
+        if offset <= tolerance:
+            return pivot  # pivot already sits on the part - do not touch it
+
+        parent_points = self._get_link_surface_points(
+            parent_link_name, robot_id, spacing)
+        if parent_points is None:
+            return pivot
+
+        snapped = compute_hinge_pivot_from_points(
+            child_points, parent_points, global_axis, hint_point=pivot
+        )
+        logging.warning(
+            f"Revolute pivot for '{child_link_name}' -> '{parent_link_name}' was "
+            f"{offset * 1000:.1f}mm away from the part (tolerance "
+            f"{tolerance * 1000:.1f}mm), measured perpendicular to the joint axis. "
+            f"This usually means an axis-aligned bounding-box corner was used as a "
+            f"hinge on a tilted part. Snapping {np.round(pivot, 4).tolist()} -> "
+            f"{np.round(snapped, 4).tolist()} (on the child/parent contact edge)."
+        )
+        return snapped
 
     def get_joint_for_child(self, child_link_name: str) -> Optional["Joint"]:
         """Gets the joint for a child link.
@@ -1201,6 +1599,7 @@ class Robot(NamedElement):
         upper_angle_deg: float,
         force_overwrite: bool = True,
         pivot_point: Optional[List[float]] = None,
+        auto_correct_pivot: bool = True,
     ) -> None:
         """
         Creates or updates a revolute joint between the specified child and parent links.
@@ -1213,6 +1612,11 @@ class Robot(NamedElement):
             upper_angle_deg (float): The upper joint angle limit in degrees.
             force_overwrite (bool, optional): If True, overwrite existing joint.
             pivot_point (list, optional): The pivot point for the rotation in the world frame (in simulator/view frame).
+            auto_correct_pivot (bool, optional): If True (default), a `pivot_point`
+                that floats in empty space - well away from the child part, measured
+                perpendicular to `global_axis` - is snapped onto the real
+                child<->parent hinge edge. A pivot that already lies on the part is
+                left exactly as given. Set to False to use `pivot_point` verbatim.
         """
         if parent_link_name == "base":
             self._ensure_base_helper()
@@ -1221,6 +1625,22 @@ class Robot(NamedElement):
         joint = self.get_joint_between(child_link_name, parent_link_name)
         if joint is not None and not force_overwrite:
             return  # Joint already exists
+
+        # Validate the pivot against the real geometry *before* any frame change:
+        # `pivot_point` and `global_axis` are in the same simulator/view frame that
+        # `get_bounding_boxes` (and therefore `compute_aabb_vertices`) reports in,
+        # which is also the frame the mesh point clouds are sampled in.
+        if pivot_point is not None and auto_correct_pivot:
+            try:
+                pivot_point = self._snap_pivot_to_hinge(
+                    child_link_name, parent_link_name, global_axis, pivot_point
+                )
+            except Exception as exc:
+                # Never let pivot validation break joint creation.
+                logging.warning(
+                    f"Could not validate revolute pivot for '{child_link_name}': {exc}. "
+                    "Using the supplied pivot_point as-is."
+                )
 
         # Transform axis and pivot from simulator frame to mesh frame if needed
         global_axis = self._transform_from_simulator_frame(np.array(global_axis))
