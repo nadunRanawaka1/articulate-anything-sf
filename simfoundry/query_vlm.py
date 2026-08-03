@@ -16,18 +16,24 @@ def make_vlm(cfg: DictConfig, verbose: bool = False):
     """
     Build the VLM client for a step, chosen by `cfg.model_name`.
 
-    Gemini and Claude both run on Vertex AI and authenticate with
-    `cfg.gcloud_project` + gcloud ADC. Claude is not served in every
-    Gemini region, so `cfg.claude_location` can override `cfg.gcloud_location`
-    for the Claude path ("global" is the safe choice). Setting
-    `cfg.vlm_backend: anthropic` sends Claude to the direct Anthropic API
-    instead, which bypasses Vertex quota entirely.
+    Gemini takes either a Developer API key (`cfg.api_key`, else GEMINI_API_KEY /
+    GOOGLE_API_KEY) or Vertex AI + gcloud ADC via `cfg.gcloud_project`. It prefers
+    the key when one is configured; force a route with `cfg.gemini_backend`
+    ("api_key" or "vertex"). See prompt_utils.resolve_gemini_auth.
+
+    Claude runs on Vertex AI and authenticates with `cfg.gcloud_project` + gcloud
+    ADC. Claude is not served in every Gemini region, so `cfg.claude_location`
+    can override `cfg.gcloud_location` for the Claude path ("global" is the safe
+    choice). Setting `cfg.vlm_backend: anthropic` sends Claude to the direct
+    Anthropic API instead, which bypasses Vertex quota entirely.
 
     These steps only ever send images and text, both of which Claude accepts.
     """
     if "gemini" in cfg.model_name:
         return Gemini(project=cfg.gcloud_project, location=cfg.gcloud_location,
-                      model=cfg.model_name, verbose=verbose)
+                      model=cfg.model_name, verbose=verbose,
+                      api_key=cfg.get("api_key", None),
+                      backend=cfg.get("gemini_backend", None))
     elif is_claude_model(cfg.model_name):
         location = cfg.get("claude_location", None) or cfg.gcloud_location
         return Claude(project=cfg.gcloud_project, location=location,

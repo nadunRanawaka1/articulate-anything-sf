@@ -5,7 +5,7 @@ out_dir: "results"
 # dataset_dir: "datasets/partnet-mobility-v0/dataset"
 dataset_dir: "datasets/partnet-mobility-v0-processed/partnet-mobility-v0/dataset"
 api_key: null
-gcloud_project: ${oc.env:GCLOUD_PROJECT}
+gcloud_project: ${oc.env:GCLOUD_PROJECT,null}
 gcloud_location: us-west1
 parallel: 4
 n_retries: 3 # number of retries for the LLM agent`

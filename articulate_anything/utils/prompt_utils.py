@@ -28,25 +28,104 @@ GPT_VERSIONS = {
 }
 
 
-def setup_gemini(model_name, system_instruction=None, api_key=None, cfg=None):
-    api_key = api_key or os.environ.get("GEMINI_API_KEY")
-    if api_key:
-        return genai.Client(api_key=api_key)
+GEMINI_API_KEY_ENVS = ("GEMINI_API_KEY", "GOOGLE_API_KEY")
 
-    # No API key: fall back to Vertex AI auth (project/location), matching the
-    # client used elsewhere in the pipeline (see articulate_anything/utils/vlm.py).
-    # This keeps the agent working when the rest of the pipeline authenticates
-    # via gcloud_project instead of GEMINI_API_KEY.
-    gcloud_project = getattr(cfg, "gcloud_project", None) if cfg is not None else None
-    if gcloud_project:
-        gcloud_location = getattr(cfg, "gcloud_location", None) or "global"
-        return genai.Client(
-            vertexai=True,
-            project=gcloud_project,
-            location=gcloud_location,
+
+def resolve_gemini_auth(project=None, location="global", api_key=None, backend=None):
+    """Pick the Gemini auth route. Returns (client_kwargs, route).
+
+    route "api_key" -> Gemini Developer API (generativelanguage.googleapis.com);
+    route "vertex"  -> Vertex AI (aiplatform.googleapis.com) via gcloud ADC.
+
+    An API key and ADC are NOT interchangeable: a key identifies a project and
+    carries no IAM principal, so Vertex cannot accept one. They are separate
+    endpoints with separate quota and billing.
+
+    backend forces a route ("api_key" or "vertex"); "auto" (the default) takes a
+    key if one is configured and otherwise falls back to ADC. Override without
+    touching code via SIMFOUNDRY_GEMINI_BACKEND.
+
+    Kept byte-for-byte equivalent to simfoundry/models/vlm.py's copy so the two
+    halves of the pipeline cannot drift apart on auth.
+    """
+    backend = (backend or os.environ.get("SIMFOUNDRY_GEMINI_BACKEND") or "auto").lower()
+    if backend not in ("auto", "api_key", "vertex"):
+        raise ValueError(
+            f"Unknown Gemini backend {backend!r}: expected 'auto', 'api_key' or 'vertex'."
         )
+    key = api_key or next(
+        (os.environ[k] for k in GEMINI_API_KEY_ENVS if os.environ.get(k)), None
+    )
 
-    return None
+    if backend == "vertex" or (backend == "auto" and not key):
+        if not project:
+            raise ValueError(
+                "Gemini needs a Vertex project: pass project=, set GCLOUD_PROJECT, or "
+                "supply an API key via api_key=/GEMINI_API_KEY. Vertex also needs ADC "
+                "(`gcloud auth application-default login`, or a service-account JSON in "
+                "GOOGLE_APPLICATION_CREDENTIALS)."
+            )
+        return {"vertexai": True, "project": project, "location": location}, "vertex"
+
+    if not key:
+        raise ValueError(
+            "Gemini backend 'api_key' requires a key: pass api_key= or set "
+            + " / ".join(GEMINI_API_KEY_ENVS) + "."
+        )
+    return {"api_key": key}, "api_key"
+
+
+GEMINI_TEXT_HARM_CATEGORIES = (
+    "HARM_CATEGORY_HATE_SPEECH",
+    "HARM_CATEGORY_DANGEROUS_CONTENT",
+    "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+    "HARM_CATEGORY_HARASSMENT",
+)
+GEMINI_IMAGE_HARM_CATEGORIES = (
+    "HARM_CATEGORY_IMAGE_HATE",
+    "HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT",
+    "HARM_CATEGORY_IMAGE_HARASSMENT",
+    "HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT",
+)
+
+
+def gemini_safety_settings(SafetySetting, route="vertex", threshold="OFF"):
+    """Safety settings for the given auth route.
+
+    The Developer API rejects the HARM_CATEGORY_IMAGE_* categories with a 400
+    INVALID_ARGUMENT, so they are sent on the vertex route only.
+    """
+    categories = GEMINI_TEXT_HARM_CATEGORIES
+    if route != "api_key":
+        categories += GEMINI_IMAGE_HARM_CATEGORIES
+    return [SafetySetting(category=c, threshold=threshold) for c in categories]
+
+
+def _cfg_attr(cfg, name, default=None):
+    if cfg is None:
+        return default
+    try:
+        value = cfg[name] if name in cfg else getattr(cfg, name, default)
+    except Exception:
+        value = getattr(cfg, name, default)
+    return default if value is None else value
+
+
+def setup_gemini(model_name, system_instruction=None, api_key=None, cfg=None):
+    """Build the agent's Gemini client, honouring an API key or Vertex ADC.
+
+    Returns None when neither is configured -- callers treat that as "no model".
+    """
+    try:
+        client_kwargs, _route = resolve_gemini_auth(
+            project=_cfg_attr(cfg, "gcloud_project"),
+            location=_cfg_attr(cfg, "gcloud_location", "global"),
+            api_key=api_key,
+            backend=_cfg_attr(cfg, "gemini_backend"),
+        )
+    except ValueError:
+        return None
+    return genai.Client(**client_kwargs)
 
 def setup_vlm_model(model_name, system_instruction=None, api_key=None, cfg=None):
     if model_name in GPT_VERSIONS:

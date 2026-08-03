@@ -10,7 +10,7 @@ scene_name: <FILL>  # Top-level directory name
 seed: 0
 visualize: false
 debug: false
-gcloud_project: ${oc.env:GCLOUD_PROJECT}
+gcloud_project: ${oc.env:GCLOUD_PROJECT,null}
 # vertex -> Vertex AI via gcloud ADC (serves both Gemini and Claude)
 # anthropic -> the direct Anthropic API (Claude only, needs ANTHROPIC_API_KEY)
 vlm_backend: vertex
@@ -56,7 +56,7 @@ s3_segment_mesh:
   # Explosion settings (partfield only)
   explode: true  # If true, only render exploded views
   explosion_factor: 0.5  # How much to explode (0=none, 1=full distance)
-  num_clusters: 10  # Number of segments for partfield
+  num_clusters: 5  # Number of segments for partfield
 
 s4_merge_mesh_parts:
   rerun: false

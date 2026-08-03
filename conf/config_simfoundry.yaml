@@ -7,7 +7,7 @@ out_dir: "results/default_cabinet"
 # dataset_dir: "datasets/partnet-mobility-v0/dataset"
 dataset_dir: "datasets/partnet-mobility-v0-processed/partnet-mobility-v0/dataset"
 api_key: null
-gcloud_project: ${oc.env:GCLOUD_PROJECT}
+gcloud_project: ${oc.env:GCLOUD_PROJECT,null}
 gcloud_location: us-west1
 # Where VLM calls run:
 #   vertex    -> Vertex AI, authenticated with gcloud ADC + gcloud_project.

@@ -5,7 +5,7 @@ out_dir: "results/default_cabinet"
 # dataset_dir: "datasets/partnet-mobility-v0/dataset"
 dataset_dir: "datasets/partnet-mobility-v0-processed/partnet-mobility-v0/dataset"
 api_key: null
-gcloud_project: ${oc.env:GCLOUD_PROJECT}
+gcloud_project: ${oc.env:GCLOUD_PROJECT,null}
 gcloud_location: us-west1
 # vertex -> Vertex AI via gcloud ADC (serves both Gemini and Claude)
 # anthropic -> the direct Anthropic API (Claude only, needs ANTHROPIC_API_KEY)

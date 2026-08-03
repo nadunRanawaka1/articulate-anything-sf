@@ -26,3 +26,28 @@ deps/
 
 # Editor workspace files
 *.code-workspace
+# ---------------------------------------------------------------------------
+# Local investigation, experiments and run artifacts — not for the public fork
+# ---------------------------------------------------------------------------
+# Design/investigation write-ups. Keep these on an internal branch; they record
+# why several solver designs were rejected, but they are not release material.
+docs/
+
+# VLM ablation harness and scoped experiment runners.
+experiments/
+
+# Throwaway verification scripts and cached measurement data.
+.scratch_verify/
+
+# Model-response and render caches.
+cache/
+
+# Locally supplied ground-truth assets (~60MB, not ours to redistribute).
+datasets/reconstructed_assets/
+
+# Per-scene configs written by stage 8b at run time.
+simfoundry/cfg/generated_*.yaml
+
+# Agent/editor tooling state.
+.claude/
+.mcp.json

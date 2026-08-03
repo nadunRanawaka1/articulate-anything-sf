@@ -18,6 +18,8 @@ from articulate_anything.utils.remote_retry import (
 from articulate_anything.utils.utils import assert_valid_key
 from articulate_anything.utils.prompt_utils import (
     CLAUDE_VERSIONS,
+    gemini_safety_settings,
+    resolve_gemini_auth,
     claude_block_from_path,
     claude_response_text,
     claude_stream_message,
@@ -98,16 +100,22 @@ class Gemini(VLM_API):
     }
     def __init__(
         self,
-        project,
+        project=None,
         location="global",
         model="gemini-2.5-pro",
         verbose=False,
+        api_key=None,
+        backend=None,
     ):
         """
         Args:
-            project (str): Name of the project to use when calling the Gemini client
+            project (None or str): Vertex project. Required for the "vertex" route only.
             location (str): Location to use when calling the Gemini client
             model (str): Gemini model to use. Must be one of self.VERSIONS
+            api_key (None or str): Gemini Developer API key. Falls back to
+                GEMINI_API_KEY / GOOGLE_API_KEY.
+            backend (None or str): "api_key", "vertex", or "auto" (default).
+                See prompt_utils.resolve_gemini_auth.
         """
         self.project = project
         self.verbose = verbose
@@ -118,11 +126,12 @@ class Gemini(VLM_API):
         self.location = location
         assert_valid_key(key=model, valid_keys=self.VERSIONS, name="Gemini model")
         self.model = model
-        self.client = genai.Client(
-            vertexai=True,
-            project=self.project,
-            location=self.location,
+        client_kwargs, self.auth_route = resolve_gemini_auth(
+            project=project, location=location, api_key=api_key, backend=backend,
         )
+        if self.verbose:
+            print(f"Gemini auth route: {self.auth_route}", flush=True)
+        self.client = genai.Client(**client_kwargs)
         
 
     def __call__(
@@ -177,31 +186,9 @@ class Gemini(VLM_API):
             system_instruction=system_prompt,
             max_output_tokens=self.VERSIONS[self.model]["max_tokens"],
             response_modalities=self.VERSIONS[self.model]["modalities"],
-            safety_settings=[SafetySetting(
-                category="HARM_CATEGORY_HATE_SPEECH",
-                threshold="OFF"
-            ), SafetySetting(
-                category="HARM_CATEGORY_DANGEROUS_CONTENT",
-                threshold="OFF"
-            ), SafetySetting(
-                category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                threshold="OFF"
-            ), SafetySetting(
-                category="HARM_CATEGORY_HARASSMENT",
-                threshold="OFF"
-            ), SafetySetting(
-                category="HARM_CATEGORY_IMAGE_HATE",
-                threshold="OFF"
-            ), SafetySetting(
-                category="HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT",
-                threshold="OFF"
-            ), SafetySetting(
-                category="HARM_CATEGORY_IMAGE_HARASSMENT",
-                threshold="OFF"
-            ), SafetySetting(
-                category="HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT",
-                threshold="OFF"
-            )],
+            safety_settings=gemini_safety_settings(
+                SafetySetting, route=self.auth_route
+            ),
         )
 
         result = None
