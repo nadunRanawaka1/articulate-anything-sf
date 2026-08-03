@@ -30,13 +30,22 @@ def partnet_38516(intput_dir, links):
     door_bb = pred_robot.get_bounding_boxes(
         ['door'], include_dim=False)['door']
     door_vertices = compute_aabb_vertices(*door_bb)
-    pivot_point = door_vertices[3]  # Bottom-Front-Right
+
+    # The cabinet door swings open and closed around the vertical axis,
+    global_axis = [0, 0, 1]
+    # which is the z-axis.
+
+    # AABB corner -> `hint_point` (which side); `get_hinge_pivot` returns the real
+    # pivot on the child<->parent contact edge
+    pivot_point = pred_robot.get_hinge_pivot(
+        'door', 'furniture_body',
+        global_axis=global_axis,
+        hint_point=door_vertices[3],  # Bottom-Front-Right
+    )
 
     pred_robot.make_revolute_joint(
         'door', 'furniture_body',
-        # The cabinet door swings open and closed around the vertical axis,
-        global_axis=[0, 0, 1],
-        # which is the z-axis.
+        global_axis=global_axis,
         lower_angle_deg=0, upper_angle_deg=90,
         pivot_point=pivot_point,
     )

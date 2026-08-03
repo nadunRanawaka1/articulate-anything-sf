@@ -37,21 +37,32 @@ def partnet_47645(intput_dir, links, joint_id="joint_0"):
     # joint_limit: the lid opens upward
     lid_bb = pred_robot.get_bounding_boxes(["lid"], include_dim=False)["lid"]
     lid_vertices = compute_aabb_vertices(*lid_bb)
-    pivot_point = lid_vertices[0]  # Back-Left-Bottom (BLB)
+
+    global_axis = [
+        0,
+        # pivot-axis relationship:
+        # In our convention, **back** is negative and **front** is positive,
+        # and our pivot point is back so set axis to negative
+        # for the lid to open upward
+        -1,
+        0,
+    ]  # the lid of the treasure chest opens up and down so rotates along the left-right axis,
+    # which is the y-axis
+
+    # NOTE: an AABB corner is only ON the part when the part is axis-aligned. Pass it
+    # as `hint_point` (it says WHICH side/edge the hinge is on) and let
+    # `get_hinge_pivot` return the real pivot on the lid<->box contact edge.
+    pivot_point = pred_robot.get_hinge_pivot(
+        "lid",
+        "box_body",
+        global_axis=global_axis,
+        hint_point=lid_vertices[0],  # Back-Left-Bottom (BLB)
+    )
 
     pred_robot.make_revolute_joint(
         "lid",
         "box_body",
-        global_axis=[
-            0,
-            # pivot-axis relationship:
-            # In our convention, **back** is negative and **front** is positive,
-            # and our pivot point is back so set axis to negative
-            # for the lid to open upward
-            -1,
-            0,
-        ],  # the lid of the treasure chest opens up and down so rotates along the left-right axis,
-        # which is the y-axis
+        global_axis=global_axis,
         lower_angle_deg=0,
         upper_angle_deg=90,
         pivot_point=pivot_point,

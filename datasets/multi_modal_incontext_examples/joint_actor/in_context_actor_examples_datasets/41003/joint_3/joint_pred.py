@@ -60,21 +60,31 @@ def partnet_41003(intput_dir, links, joint_id="joint_3"):
         target_door_link
     ]
     door_vertices = compute_aabb_vertices(*door_bb)
-    pivot_point = door_vertices[2]  # Front-Left-Bottom (FLB)
+
+    global_axis = [
+        0,
+        0,
+        # pivot-axis relationship:
+        # In our convention, **right** is positive and **left** is negative.
+        # Since the pivot is on the left along the z-axis and we want to open outward, set
+        # axis to negative
+        -1,
+    ]  # The cabinet door swings open and closed around the vertical axis,
+    # which is the z-axis. Negative z-axis because the pivot point is on the left
+
+    # AABB corner -> `hint_point` (which side); `get_hinge_pivot` returns the real
+    # pivot on the child<->parent contact edge
+    pivot_point = pred_robot.get_hinge_pivot(
+        target_door_link,
+        "furniture_body",
+        global_axis=global_axis,
+        hint_point=door_vertices[2],  # Front-Left-Bottom (FLB)
+    )
 
     pred_robot.make_revolute_joint(
         target_door_link,
         "furniture_body",
-        global_axis=[
-            0,
-            0,
-            # pivot-axis relationship:
-            # In our convention, **right** is positive and **left** is negative.
-            # Since the pivot is on the left along the z-axis and we want to open outward, set
-            # axis to negative
-            -1,
-        ],  # The cabinet door swings open and closed around the vertical axis,
-        # which is the z-axis. Negative z-axis because the pivot point is on the left
+        global_axis=global_axis,
         lower_angle_deg=0,
         upper_angle_deg=90,  # open outward
         pivot_point=pivot_point,

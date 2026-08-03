@@ -39,6 +39,9 @@ def partnet_100963(intput_dir, links, joint_id="joint_0"):
     # ====================JOINT PREDICTION====================
     # -- Groundtruth video analysis --
     # the button switch always rotates along the center of the switch frame
+    # NOTE: this is a *centre* pivot, not a hinge on the child<->parent contact edge,
+    # so `get_hinge_pivot` does not apply here - the midpoint of the frame's AABB is
+    # genuinely the point we want.
     targetted_affordance = "toggle_button"
     switch_frame_bb = pred_robot.get_bounding_boxes(
         ["switch_frame"], include_dim=False)["switch_frame"]
