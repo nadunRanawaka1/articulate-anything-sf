@@ -2,6 +2,7 @@
 Generate base URDF from articulation tree and segmented mesh parts.
 """
 import os
+import re
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 from omegaconf import DictConfig
@@ -63,23 +64,26 @@ def generate_base_urdf(cfg: DictConfig, articulation_tree_dict: dict, verbose: b
     
     
     links = articulation_tree_dict.get('links', [])
-    parts = articulation_tree_dict.get('parts', [])
     joints = articulation_tree_dict.get('joints', [])
     
-    # Create mapping: for simplicity, assume part names match link names
-    # In a more sophisticated version, this could be derived from the VLM or user input
+    # Map each link to its part mesh by exact stem ("door_link" -> door.obj),
+    # tolerating an instance suffix on either side ("door_1_link" -> door.obj).
+    # The previous substring matching also attached "door.obj" to
+    # "door_handle_link"; a link with no unambiguous mesh now stays empty and
+    # movable links are checked below before the scaffold is written.
+    def _meshes_for_stem(stem):
+        if stem in mesh_files:
+            return [mesh_files[stem]]
+        base = re.sub(r"_\d+$", "", stem)
+        pattern = re.compile(rf"{re.escape(base)}(?:_\d+)?$")
+        matches = [mesh_files[name] for name in sorted(mesh_files)
+                   if pattern.fullmatch(name)]
+        return matches if len(matches) == 1 else []
+
     for link in links:
         link_name = link['link_name']
-        
-        if link_name in mesh_files:
-            link_to_meshes[link_name] = [mesh_files[link_name]]
-        else:
-            link_to_meshes[link_name] = []
-            for part in parts:
-                part_name = part['part_name']
-                if part_name.lower() in link_name.lower() or link_name.lower() in part_name.lower():
-                    if part_name in mesh_files:
-                        link_to_meshes[link_name].append(mesh_files[part_name])
+        stem = link_name[:-len('_link')] if link_name.endswith('_link') else link_name
+        link_to_meshes[link_name] = _meshes_for_stem(stem)
     
     fixed_part_name = articulation_tree_dict.get('fixed_part_name', 'base') if articulation_tree_dict else 'base'
     if verbose:
@@ -122,13 +126,9 @@ def generate_base_urdf(cfg: DictConfig, articulation_tree_dict: dict, verbose: b
         if not meshes and link_name.lower() == fixed_part_name.lower():
             if fixed_part_name in mesh_files:
                 meshes = [mesh_files[fixed_part_name]]
-        
-        # If still no meshes, try to find any mesh with similar name
-        if not meshes:
-            for mesh_name, mesh_file in mesh_files.items():
-                if mesh_name.lower() in link_name.lower() or link_name.lower() in mesh_name.lower():
-                    meshes.append(mesh_file)
-        
+
+        link_to_meshes[link_name] = meshes
+
         if verbose:
             print(f"  Link '{link_name}': {len(meshes)} mesh(es)")
         
@@ -168,6 +168,23 @@ def generate_base_urdf(cfg: DictConfig, articulation_tree_dict: dict, verbose: b
             ET.SubElement(geometry, 'mesh', filename=mesh_path)
             ET.SubElement(collision, 'origin', rpy="0.0 0.0 0.0", xyz=mesh_origin)
     
+    # Every movable link must carry geometry: a meshless movable link renders
+    # as nothing, articulates nothing, and only fails much later (or never).
+    movable_children = {
+        joint['child_link'] for joint in joints
+        if joint.get('joint_type') != 'fixed'
+    }
+    meshless_movable = sorted(
+        link_name for link_name in movable_children
+        if not link_to_meshes.get(link_name)
+    )
+    if meshless_movable:
+        raise ValueError(
+            f"scaffold URDF cannot be built: movable link(s) {meshless_movable} "
+            f"have no unambiguous part mesh in {mesh_parts_dir} "
+            f"(available part meshes: {sorted(mesh_files)})"
+        )
+
     # Create joints
     for joint in joints:
         joint_name = joint['joint_name']
