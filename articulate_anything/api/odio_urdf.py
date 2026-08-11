@@ -1441,13 +1441,30 @@ class Robot(NamedElement):
             dict: The prismatic joint parameters.
         """
         #TODO: look at this to fix the axis direction issue
-        global_lower_point = np.array(global_lower_point)
-        global_upper_point = np.array(global_upper_point)
+        global_lower_point = np.array(global_lower_point, dtype=float)
+        global_upper_point = np.array(global_upper_point, dtype=float)
+
+        if not (np.isfinite(global_lower_point).all()
+                and np.isfinite(global_upper_point).all()):
+            raise ValueError(
+                "prismatic joint points must be finite; got "
+                f"lower={global_lower_point.tolist()}, "
+                f"upper={global_upper_point.tolist()}"
+            )
 
         # Compute the movement axis and limits
         axis = global_upper_point - global_lower_point
-        local_axis = world_to_local(axis, parent_orientation)
         distance = np.linalg.norm(axis)
+        if distance < 1e-4:
+            # Coincident points give a degenerate zero travel, and the axis
+            # normalization below would divide by zero and write a NaN axis
+            # into the URDF.
+            raise ValueError(
+                "degenerate prismatic joint: lower and upper points coincide "
+                f"(travel {distance:.2e}); a prismatic joint must have a "
+                "usable travel range"
+            )
+        local_axis = world_to_local(axis, parent_orientation)
         local_axis = local_axis / np.linalg.norm(
             local_axis
         )  # Re-normalize the axis in the parent frame
@@ -1618,6 +1635,27 @@ class Robot(NamedElement):
                 child<->parent hinge edge. A pivot that already lies on the part is
                 left exactly as given. Set to False to use `pivot_point` verbatim.
         """
+        lower_angle_deg = float(lower_angle_deg)
+        upper_angle_deg = float(upper_angle_deg)
+        if not (np.isfinite(lower_angle_deg) and np.isfinite(upper_angle_deg)):
+            raise ValueError(
+                f"revolute limits for '{child_link_name}' must be finite; got "
+                f"[{lower_angle_deg}, {upper_angle_deg}]"
+            )
+        if upper_angle_deg - lower_angle_deg < 0.5:
+            raise ValueError(
+                f"degenerate revolute limits for '{child_link_name}': "
+                f"[{lower_angle_deg}, {upper_angle_deg}] deg spans less than "
+                "0.5 deg; a revolute joint must have a usable motion range "
+                "(use a fixed joint for rigid parts)"
+            )
+        axis_norm = np.linalg.norm(np.asarray(global_axis, dtype=float))
+        if not np.isfinite(axis_norm) or axis_norm < 1e-6:
+            raise ValueError(
+                f"degenerate rotation axis for '{child_link_name}': "
+                f"{global_axis}"
+            )
+
         if parent_link_name == "base":
             self._ensure_base_helper()
             parent_link_name = "base_helper"
