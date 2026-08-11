@@ -484,6 +484,12 @@ class JointPredictionActor(Agent):
                 videos = [v for v in videos if joint_name in v]
             videos = [v for v in videos if self.cfg.cam_view in v]
             print("AFTER FILTER VIDEO", videos)
+            if not videos:
+                raise RuntimeError(
+                    f"renderer produced no motion video in {self.cfg.out_dir} "
+                    f"(joint_name={joint_name!r}, cam_view={self.cfg.cam_view!r}); "
+                    "the predicted URDF most likely contains no movable joint"
+                )
             video = videos[0]
             video = join_path(self.cfg.out_dir, video)
         # apply cotracker to the predicted video

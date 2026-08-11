@@ -96,4 +96,13 @@ def actor_critic_loop(
                     f"Found successful seed {seed}, terminating iteration {iteration} early.")
                 break  # Stop running more seeds for this iteration
 
-    return pick_best_func(results)
+    best_result = pick_best_func(results)
+    if best_result is None or best_result.get("feedback_score", -1) < 0:
+        # Every attempt raised. Returning the -1 placeholder here used to let
+        # callers publish whatever partial artifacts the failed attempts left
+        # behind, turning hard failures into nominal successes.
+        raise RuntimeError(
+            f"all {len(results)} actor-critic attempts failed; see error.txt "
+            "under the task's iter_*/seed_* directories"
+        )
+    return best_result

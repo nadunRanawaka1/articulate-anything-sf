@@ -248,6 +248,40 @@ def create_semantics_file(out_dir: str, articulation_tree_dict: dict):
         for link_name, semantic in rows.items():
             f.write(f"{link_name} {semantic} {link_name}\n")
 
+def assert_articulated_prediction(urdf_path: str, articulation_tree_dict: dict):
+    """
+    A parseable URDF is not an articulated prediction. Refuse to publish a
+    final URDF with zero movable joints when the stage-2 tree asked for
+    movable parts — such outputs used to ship as nominal successes (the
+    renderer warned, CoTracker crashed, and the loop swallowed the exception).
+    """
+    import xml.etree.ElementTree as ET
+
+    expected_movable = [
+        j for j in articulation_tree_dict.get("joints", [])
+        if j.get("joint_type") != "fixed"
+    ]
+    if not expected_movable:
+        return
+    if not os.path.exists(urdf_path):
+        raise RuntimeError(
+            f"joint articulation produced no final URDF at {urdf_path}; "
+            "check error.txt under the joint actor's iter_*/seed_* directories"
+        )
+    movable = [
+        joint.attrib.get("name")
+        for joint in ET.parse(urdf_path).getroot().findall("joint")
+        if joint.attrib.get("type") in ("revolute", "prismatic", "continuous")
+    ]
+    if not movable:
+        raise RuntimeError(
+            f"final URDF {urdf_path} contains no movable joint, but the "
+            f"articulation tree names {len(expected_movable)} movable part(s) "
+            f"({[j['child_link'] for j in expected_movable]}); refusing to "
+            "publish a rigid body as an articulated prediction"
+        )
+
+
 def edit_urdf_to_use_mesh_type(urdf_path: str, mesh_type: str = '.obj'):
     f"""
     Edit the URDF to use <mesh_type> meshes instead of .glb, .stl, .dae meshes.
@@ -844,6 +878,7 @@ def articulate_simfoundry(
     # Copy the final urdf to the out_dir and edit to use .glb meshes
     joint_actor_result = result["Joint actor"][-1]
     final_urdf_path = join_path(joint_actor_result.cfg.out_dir, 'mobility.urdf')
+    assert_articulated_prediction(final_urdf_path, articulation_tree_dict)
     shutil.copy(final_urdf_path, join_path(cfg.out_dir, cfg.object_name, "mobility_final.urdf"))
     edit_urdf_to_use_mesh_type(join_path(cfg.out_dir, cfg.object_name, "mobility_final.urdf"), '.glb')
 
