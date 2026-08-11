@@ -94,7 +94,7 @@ class DataAugmentation:
         if not isinstance(checkpoint_path, str) or not os.path.exists(checkpoint_path):
             raise FileNotFoundError(
                 f"Checkpoint file not found at provided path: {checkpoint_path}")
-        self.model = CoTrackerPredictor(checkpoint=checkpoint_path, v2=True, window_len=self.cfg.window_len)
+        self.model = CoTrackerPredictor(checkpoint=checkpoint_path, window_len=self.cfg.window_len)
         self.model = self.model.to(DEFAULT_DEVICE)
 
     def get_prediction(
@@ -211,7 +211,7 @@ class OnlineDataAugmentation:
             raise FileNotFoundError(
                 f"Checkpoint file not found at provided path: {checkpoint_path}")
         self.model = CoTrackerOnlinePredictor(
-            checkpoint=checkpoint_path, v2=True, window_len=self.cfg.window_len)
+            checkpoint=checkpoint_path, window_len=self.cfg.window_len)
         self.model = self.model.to(DEFAULT_DEVICE)
 
     def process_step(self, window_frames, is_first_step, grid_size, grid_query_frame):
