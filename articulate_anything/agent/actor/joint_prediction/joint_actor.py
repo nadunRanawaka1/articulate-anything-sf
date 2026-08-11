@@ -33,6 +33,32 @@ from articulate_anything.utils.metric import compute_joint_diff
 from articulate_anything.utils.partnet_utils import get_joint_semantic
 from omegaconf import DictConfig, OmegaConf
 import os
+import subprocess
+import sys
+
+# Runs the assembled joint program exactly the way render_prediction later
+# will (mask_urdf links, same input_dir, same rotation context), but in a
+# child process so a hang or crash cannot take the pipeline down with it.
+_PREFLIGHT_DRIVER = """\
+import sys
+
+program_path, urdf_file, input_dir, out_path = sys.argv[1:5]
+rotation = sys.argv[5:8]
+
+from articulate_anything.api.odio_urdf import (
+    compile_python_to_urdf,
+    set_simulator_rotation_context,
+)
+from articulate_anything.preprocess.preprocess_utils import mask_urdf
+
+if rotation:
+    rx, ry, rz = (float(v) for v in rotation)
+    set_simulator_rotation_context(rx=rx, ry=ry, rz=rz)
+
+links = mask_urdf(urdf_file).get_links()
+compile_python_to_urdf(program_path, out_path=out_path,
+                       input_dir=input_dir, links=links)
+"""
 
 JOINT_PREDICTION_GENERAL_SYSTEM_INSTRUCTION = """
 ## General Instructions
@@ -440,14 +466,74 @@ class JointPredictionActor(Agent):
                 # No return found, just append
                 function_definition = original_link_placement.rstrip() + "\n\n" + joint_prediction_code
         
-        # Never publish a truncated cached program. Agent.generate_prediction
-        # skips on this pathname during resume, so syntax validation and atomic
-        # replacement must happen before it becomes a sentinel.
+        # Never publish a truncated or crashing program. Agent.generate_prediction
+        # skips on this pathname during resume, so syntax validation, the runtime
+        # preflight, and atomic replacement must all happen before it becomes a
+        # sentinel.
         compile(function_definition, "<joint_pred.py>", "exec")
+        self._preflight_generated_program(function_definition)
         self._atomic_write_text(
             join_path(self.cfg.out_dir, self.OUT_RESULT_PATH),
             function_definition,
         )
+
+    def _preflight_generated_program(self, function_definition):
+        """
+        Execute the assembled program in a bounded subprocess before
+        publishing it. Syntax validation alone admitted programs that crashed
+        at runtime (e.g. tuple arithmetic on bounding-box corners), leaving no
+        URDF behind a completion sentinel that resume logic then trusted.
+        Raises ValueError so the Agent retry loop re-prompts on failure.
+        """
+        if self.cfg.modality == "text":
+            # Text mode builds links from a box layout, not a URDF scaffold.
+            return
+        if not self.cfg.joint_actor.get("runtime_preflight", True):
+            return
+
+        program_path = join_path(self.cfg.out_dir, "joint_pred_preflight.py")
+        self._atomic_write_text(program_path, function_definition)
+
+        out_path = join_path(self.cfg.out_dir, "preflight_mobility.urdf")
+        if os.path.exists(out_path):
+            os.remove(out_path)
+
+        cmd = [
+            sys.executable, "-c", _PREFLIGHT_DRIVER,
+            program_path,
+            get_urdf_file(self.cfg.dataset_dir),
+            self.cfg.dataset_dir,
+            out_path,
+        ]
+        rotation_pose = OmegaConf.select(self.cfg, "simulator.urdf.rotation_pose")
+        if rotation_pose is not None:
+            cmd += [str(rotation_pose.rx), str(rotation_pose.ry),
+                    str(rotation_pose.rz)]
+
+        env = os.environ.copy()
+        project_root = str(self.cfg.get("project_root", "") or "")
+        if project_root:
+            env["PYTHONPATH"] = (
+                project_root + os.pathsep + env.get("PYTHONPATH", "")
+            )
+
+        timeout_s = int(self.cfg.joint_actor.get("preflight_timeout_s", 180))
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=timeout_s,
+                env=env,
+            )
+        except subprocess.TimeoutExpired:
+            raise ValueError(
+                f"generated joint program exceeded the {timeout_s}s runtime "
+                "preflight; refusing to publish it"
+            )
+        if proc.returncode != 0 or not os.path.exists(out_path):
+            stderr_tail = "\n".join(proc.stderr.strip().splitlines()[-15:])
+            raise ValueError(
+                "generated joint program failed the runtime preflight "
+                f"(exit code {proc.returncode}):\n{stderr_tail}"
+            )
 
     def get_links(self):
         if self.cfg.modality == "text":
