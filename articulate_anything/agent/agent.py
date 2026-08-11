@@ -98,6 +98,25 @@ class Agent:
     def _make_prompt_parts(self, *args, **kwargs):
         raise NotImplementedError
 
+    def _generate_content(self, prompt_parts, gen_config):
+        """Call the configured SDK through the same path on initial and retry attempts."""
+
+        if self.genai_model:
+            contents = (
+                types.Content(parts=prompt_parts)
+                if self.__class__.__name__ == "JointCriticSimfoundryVideo"
+                else prompt_parts
+            )
+            return self.model.models.generate_content(
+                model=self.cfg.model_name,
+                contents=contents,
+                config=gen_config,
+            )
+        return self.model.generate_content(
+            prompt_parts,
+            generation_config=gen_config,
+        )
+
     def generate_prediction(self, *args, gen_config=None, overwrite=False, **kwargs):
         out_path = join_path(self.cfg.out_dir, self.OUT_RESULT_PATH)
         if (
@@ -131,27 +150,8 @@ class Agent:
 
 
 
-        if self.genai_model:
-            logging.info(f"Generating content with model: {self.cfg.model_name}")
-            #TODO: This is a hack to handle the different types of prompt parts for the different joint critics.
-            if self.__class__.__name__ == "JointCriticSimfoundryVideo":
-                response = self.model.models.generate_content(
-                    model=self.cfg.model_name,
-                    contents=types.Content(parts=prompt_parts),     
-                    config=gen_config,
-                )
-            else:
-                response = self.model.models.generate_content(
-                    model=self.cfg.model_name,
-                    contents=prompt_parts,     
-                    config=gen_config,
-                )
-        else:
-            logging.info(f"Generating content with model: {self.cfg.model_name}")
-            response = self.model.generate_content(
-                prompt_parts,
-                generation_config=gen_config,
-            )
+        logging.info(f"Generating content with model: {self.cfg.model_name}")
+        response = self._generate_content(prompt_parts, gen_config)
      
         # logging.info(f"Usage: {response.usage_metadata}")
 
@@ -161,8 +161,8 @@ class Agent:
                 break
             except Exception as e:
                 logging.error(f"Error parsing response: {e}")
-                response = self.model.generate_content(
-                    prompt_parts, generation_config=gen_config)
+                if i + 1 < self.n_retries:
+                    response = self._generate_content(prompt_parts, gen_config)
         else:
             logging.error(f"Failed to parse response after {self.n_retries} retries")
             raise Exception(f"Failed to parse response after {self.n_retries} retries")
