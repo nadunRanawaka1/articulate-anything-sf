@@ -168,18 +168,20 @@ def compute_joint_diff(
         motion_diff = flipped_diff
 
     # Compare joint origin
-    if joint["joint_type"] == "revolute":
-        # For revolute joints, use cross product method to find shortest distance between axes
+    if joint["joint_type"] in {"revolute", "continuous"}:
+        # For hinge-family joints, find the shortest distance between axis lines.
         w = np.cross(a2, a1)
-        if np.allclose(w, 0):
-            # The axes are parallel or collinear
-            w = (
-                np.cross(a2, [1, 0, 0])
-                if not np.allclose(a2, [1, 0, 0])
-                else np.cross(a1, [0, 1, 0])
-            )
         p = pos1 - pos2
-        origin_diff = np.abs(np.dot(p, w)) / norm(w)
+        if norm(w) < 1e-6:
+            # Parallel/near-parallel axes are the common case for a good
+            # prediction.  Their line distance is the component of p
+            # perpendicular to the shared unit direction; substituting an
+            # arbitrary perpendicular (the old behavior) measures only one
+            # component and can under-report the error.
+            axis = a1 / norm(a1)
+            origin_diff = norm(p - np.dot(p, axis) * axis)
+        else:
+            origin_diff = np.abs(np.dot(p, w)) / norm(w)
     else:
         # For other joint types, use Euclidean distance
         origin_diff = norm(pos1 - pos2)
