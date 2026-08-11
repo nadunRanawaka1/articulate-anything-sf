@@ -407,7 +407,7 @@ class JointPredictionActor(Agent):
         joint_marker = "# ====================JOINT PREDICTION===================="
         
         if joint_marker in function_definition:
-            parts = function_definition.split(joint_marker)
+            parts = function_definition.split(joint_marker, 1)
             joint_prediction_code = joint_marker + parts[1]
             
             joint_prediction_code = joint_prediction_code.rstrip()
@@ -440,8 +440,14 @@ class JointPredictionActor(Agent):
                 # No return found, just append
                 function_definition = original_link_placement.rstrip() + "\n\n" + joint_prediction_code
         
-        string_to_file(function_definition, join_path(
-            self.cfg.out_dir, self.OUT_RESULT_PATH))
+        # Never publish a truncated cached program. Agent.generate_prediction
+        # skips on this pathname during resume, so syntax validation and atomic
+        # replacement must happen before it becomes a sentinel.
+        compile(function_definition, "<joint_pred.py>", "exec")
+        self._atomic_write_text(
+            join_path(self.cfg.out_dir, self.OUT_RESULT_PATH),
+            function_definition,
+        )
 
     def get_links(self):
         if self.cfg.modality == "text":

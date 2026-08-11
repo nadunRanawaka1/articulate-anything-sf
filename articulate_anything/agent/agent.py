@@ -14,6 +14,7 @@ from articulate_anything.utils.prompt_utils import (
 from omegaconf import OmegaConf
 import os
 import logging
+import tempfile
 from IPython.display import display, HTML
 from google.genai import types
 
@@ -116,6 +117,26 @@ class Agent:
             prompt_parts,
             generation_config=gen_config,
         )
+
+    @staticmethod
+    def _atomic_write_text(path, content):
+        """Replace a small audit artifact atomically."""
+
+        directory = os.path.dirname(path)
+        os.makedirs(directory, exist_ok=True)
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=directory
+        )
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(content)
+            os.replace(temporary, path)
+        except BaseException:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+            raise
 
     def generate_prediction(self, *args, gen_config=None, overwrite=False, **kwargs):
         out_path = join_path(self.cfg.out_dir, self.OUT_RESULT_PATH)
