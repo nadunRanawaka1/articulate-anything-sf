@@ -1062,8 +1062,13 @@ def extract_code_from_string(code_string):
     matches = re.findall(pattern, code_string, re.DOTALL)
 
     if matches:
-        # Return the first match of the Python code block, removing whitespace
-        return matches[0].strip()
+        # dedent BEFORE strip. The model often emits the block already indented
+        # (it is writing a function body). `.strip()` alone removes the leading
+        # whitespace of the first line only, leaving line 1 at column 0 and the
+        # rest at column 4 -- `IndentationError: unexpected indent` on otherwise
+        # valid code. textwrap.dedent removes the COMMON prefix, so relative
+        # indentation inside the block is preserved.
+        return textwrap.dedent(matches[0]).strip()
     else:
         return None  # Indicate no code found
 
