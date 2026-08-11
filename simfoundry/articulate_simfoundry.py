@@ -170,13 +170,83 @@ def generate_link_placement_from_urdf(urdf_path: str, object_name: str, output_p
     return output_path
 
 def create_semantics_file(out_dir: str, articulation_tree_dict: dict):
+    """
+    Write semantics.txt covering exactly the links present in the scaffold URDF.
+
+    mask_urdf silently drops any URDF link without a semantics row, and the
+    generated link-placement code references every URDF link by name — so a
+    row fabricated from a tree-dict name that differs from the URDF (e.g.
+    fixed_part_name "golf_cart_base" vs actual root "golf_cart_base_1_link")
+    loses the link at masking time and dies with KeyError deep in stage 5.
+    The URDF link inventory is therefore the single source of truth here; the
+    articulation tree only contributes joint types.
+    """
+    import re
+    import xml.etree.ElementTree as ET
+
     semantics_file = join_path(out_dir, "semantics.txt")
+    urdf_path = join_path(out_dir, "mobility.urdf")
+
+    urdf_links = [
+        link.attrib["name"]
+        for link in ET.parse(urdf_path).getroot().findall("link")
+        if link.attrib["name"] != "base"
+    ]
+
+    def resolve(name, taken):
+        """Match a tree-dict link name to an actual URDF link, tolerating a
+        missing instance suffix (door_link vs door_1_link)."""
+        if name in urdf_links:
+            return None if name in taken else name
+        stem = name[: -len("_link")] if name.endswith("_link") else name
+        pattern = re.compile(rf"{re.escape(stem)}(?:_\d+)?_link$")
+        candidates = [
+            l for l in urdf_links if l not in taken and pattern.fullmatch(l)
+        ]
+        return candidates[0] if len(candidates) == 1 else None
+
+    rows = {}
+    problems = []
+    for joint in articulation_tree_dict["joints"]:
+        child = joint["child_link"]
+        actual = resolve(child, rows)
+        if actual is None:
+            problems.append(
+                f"joint child link {child!r} has no unambiguous match among "
+                f"unclaimed URDF links (URDF has {sorted(urdf_links)})"
+            )
+            continue
+        if actual != child:
+            logging.warning(
+                f"semantics: tree link {child!r} resolved to URDF link {actual!r}"
+            )
+        rows[actual] = urdf_to_semantic[joint["joint_type"]]
+
+    if problems:
+        raise ValueError(
+            "semantics.txt cannot cover the scaffold URDF; refusing to write a "
+            "file that would silently drop links at mask_urdf time: "
+            + "; ".join(problems)
+        )
+
+    # Every unclaimed URDF link is non-movable scaffold geometry (the root and
+    # any orphan part). Label them all so masking preserves them; the tree's
+    # fixed_part_name is only a cross-check, never used to fabricate a name.
+    remaining = [l for l in urdf_links if l not in rows]
+    expected_root = f"{articulation_tree_dict['fixed_part_name']}_link"
+    if remaining and expected_root not in remaining and resolve(
+        expected_root, set(rows)
+    ) not in remaining:
+        logging.warning(
+            f"semantics: fixed_part_name root {expected_root!r} matches no "
+            f"unclaimed URDF link; labelling {sorted(remaining)} free instead"
+        )
+    for link_name in remaining:
+        rows[link_name] = "free"
 
     with open(semantics_file, "w") as f:
-        for joint in articulation_tree_dict['joints']:
-            f.write(f"{joint['child_link']} {urdf_to_semantic[joint['joint_type']]} {joint['child_link']}\n")
-
-        f.write(f"{articulation_tree_dict['fixed_part_name']}_link free {articulation_tree_dict['fixed_part_name']}_link")
+        for link_name, semantic in rows.items():
+            f.write(f"{link_name} {semantic} {link_name}\n")
 
 def edit_urdf_to_use_mesh_type(urdf_path: str, mesh_type: str = '.obj'):
     f"""
@@ -584,6 +654,14 @@ def articulate_simfoundry(
     
     if not os.path.exists(join_path(cfg.out_dir, cfg.object_name, "meshes")):
         setup_dir(cfg, articulation_tree_dict, verbose=verbose)
+    else:
+        # Resumed directory: setup_dir was skipped, so semantics.txt may have
+        # been written by older code that fabricated the root link name from
+        # fixed_part_name. Rewriting it is cheap and deterministic, and
+        # guarantees coverage of the actual URDF inventory.
+        create_semantics_file(
+            join_path(cfg.out_dir, cfg.object_name), articulation_tree_dict
+        )
     
     
     # Auto-compute raise offset
