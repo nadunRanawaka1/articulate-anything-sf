@@ -461,9 +461,10 @@ def make_claude_client(api_key=None, cfg=None):
 class ClaudeResponse:
     """Mirrors the `.text` attribute the agents expect from a Gemini response."""
 
-    def __init__(self, text, message=None):
+    def __init__(self, text, message=None, text_error=None):
         self.text = text
         self.message = message
+        self.text_error = text_error
 
 
 class ClaudeWrapper:
@@ -507,7 +508,21 @@ class ClaudeWrapper:
         message = claude_stream_message(self.client, kwargs)
 
         logging.info(f"Claude [{self.model_name}] usage: {message.usage}")
-        return ClaudeResponse(claude_response_text(message), message=message)
+        try:
+            text = claude_response_text(message)
+            text_error = None
+        except Exception as error:
+            # Return the paid raw message so the caller can log usage and retry
+            # the parse. Raising here used to lose refusals and
+            # thinking-exhausted/empty responses entirely.
+            text = ""
+            text_error = f"{type(error).__name__}: {error}"
+            logging.warning(
+                f"Claude [{self.model_name}] returned no parseable text: {text_error}"
+            )
+        return ClaudeResponse(
+            text, message=message, text_error=text_error
+        )
 
 
 def setup_claude(model_name, system_instruction=None, api_key=None, cfg=None):
