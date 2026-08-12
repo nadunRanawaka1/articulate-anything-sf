@@ -103,11 +103,15 @@ class Agent:
         """Call the configured SDK through the same path on initial and retry attempts."""
 
         if self.genai_model:
-            contents = (
-                types.Content(parts=prompt_parts)
-                if self.__class__.__name__ == "JointCriticSimfoundryVideo"
-                else prompt_parts
-            )
+            if self.__class__.__name__ == "JointCriticSimfoundryVideo":
+                # This path passes an explicit Content, whose parts must be
+                # typed; wrap any plain string (e.g. appended retry feedback).
+                contents = types.Content(parts=[
+                    types.Part(text=part) if isinstance(part, str) else part
+                    for part in prompt_parts
+                ])
+            else:
+                contents = prompt_parts
             return self.model.models.generate_content(
                 model=self.cfg.model_name,
                 contents=contents,
@@ -117,6 +121,24 @@ class Agent:
             prompt_parts,
             generation_config=gen_config,
         )
+
+    @staticmethod
+    def _make_retry_prompt_parts(prompt_parts, error):
+        """
+        The original prompt plus what went wrong, so a retry is an informed
+        correction rather than an identical blind resample. Only the latest
+        error is appended, keeping the prompt bounded across retries.
+        """
+        detail = f"{type(error).__name__}: {error}"
+        if len(detail) > 2000:
+            detail = detail[:2000] + " ...[truncated]"
+        feedback = (
+            "\n\nYour previous response could not be used. It failed with:\n"
+            f"{detail}\n"
+            "Please respond again, correcting this problem and following "
+            "every formatting instruction exactly."
+        )
+        return list(prompt_parts) + [feedback]
 
     @staticmethod
     def _atomic_write_text(path, content):
@@ -183,7 +205,10 @@ class Agent:
             except Exception as e:
                 logging.error(f"Error parsing response: {e}")
                 if i + 1 < self.n_retries:
-                    response = self._generate_content(prompt_parts, gen_config)
+                    response = self._generate_content(
+                        self._make_retry_prompt_parts(prompt_parts, e),
+                        gen_config,
+                    )
         else:
             logging.error(f"Failed to parse response after {self.n_retries} retries")
             raise Exception(f"Failed to parse response after {self.n_retries} retries")

@@ -1,10 +1,12 @@
 """
-Transform joint axes from simulator/view coordinate frame back to mesh coordinate frame.
+Transform joints from simulator/view coordinate frame back to mesh coordinate frame.
 
 When simulator applies rotation (rx, ry, rz), the VLM sees the rotated object and predicts
-joint axes in the rotated frame. But URDF joints must be specified in the mesh frame.
+joints in the rotated frame. But URDF joints must be specified in the mesh frame.
 
-This script transforms the axes back.
+This script transforms each movable joint's axis AND origin back. (An earlier
+version transformed only axes, silently corrupting joint positions whenever
+the rotation was nonzero.)
 """
 import xml.etree.ElementTree as ET
 import numpy as np
@@ -74,14 +76,42 @@ def transform_urdf_joints_to_mesh_frame(urdf_path: str, rx: float, ry: float, rz
                 print(f"  {joint_name} ({joint_type}):")
                 print(f"    Rotated frame: [{axis_rotated[0]:.4f}, {axis_rotated[1]:.4f}, {axis_rotated[2]:.4f}]")
                 print(f"    Mesh frame:    [{axis_mesh[0]:.4f}, {axis_mesh[1]:.4f}, {axis_mesh[2]:.4f}]")
-            
+
             joints_transformed += 1
-    
+
+        # The origin position is a point in the same globally-rotated frame
+        # the axis was predicted in; it must be rotated back identically or
+        # the pivot ends up at the wrong place on the mesh.
+        origin_elem = joint.find("origin")
+        if origin_elem is not None:
+            xyz = np.array([
+                float(x) for x in origin_elem.attrib.get("xyz", "0 0 0").split()
+            ])
+            xyz_mesh = rotation_matrix_inv @ xyz
+            origin_elem.attrib["xyz"] = f"{xyz_mesh[0]} {xyz_mesh[1]} {xyz_mesh[2]}"
+
+            rpy = np.array([
+                float(x) for x in origin_elem.attrib.get("rpy", "0 0 0").split()
+            ])
+            if np.any(np.abs(rpy) > 1e-9):
+                # Re-express an origin orientation under the global frame
+                # change: conjugation, not left multiplication. Identity
+                # stays identity.
+                r_new = rotation_inv * R.from_euler('xyz', rpy) * rotation
+                rpy_new = r_new.as_euler('xyz')
+                origin_elem.attrib["rpy"] = (
+                    f"{rpy_new[0]} {rpy_new[1]} {rpy_new[2]}"
+                )
+
+            if verbose:
+                print(f"    Origin:        [{xyz[0]:.4f}, {xyz[1]:.4f}, {xyz[2]:.4f}]"
+                      f" -> [{xyz_mesh[0]:.4f}, {xyz_mesh[1]:.4f}, {xyz_mesh[2]:.4f}]")
+
     # Save transformed URDF
     tree.write(output_path, encoding='utf-8', xml_declaration=True)
-    
+
     if verbose:
-        print(f"\n✅ Transformed {joints_transformed} joint axes")
+        print(f"\n✅ Transformed {joints_transformed} joints (axis + origin)")
         print(f"  Output: {output_path}")
     
     return output_path

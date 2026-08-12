@@ -144,7 +144,9 @@ def segment_mesh(cfg: DictConfig, verbose: bool = False):
         point_num=cfg.get('point_num', 100000),
         prompt_num=cfg.get('prompt_num', 400),
         prompt_bs=cfg.get('prompt_bs', 8),
-        threshold=cfg.get('threshold', 0.95),
+        # Default must match the shipped template (0.85): a scene config that
+        # omits the key used to silently change segmentation behavior.
+        threshold=cfg.get('threshold', 0.85),
         post_process=cfg.get('post_process', True),
         seed=42,
         save_mid_res=True,

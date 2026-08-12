@@ -98,6 +98,10 @@ s4_merge_mesh_parts:
   out_dirname: s4_merge_mesh_parts
   model_name: claude-opus-5
   interactive_correction: true   # opens a Dash UI to fix segment->part assignment
+  # What to do when a movable part named by stage 2 gets no mesh faces:
+  #   fail - stop the object (benchmark behavior)
+  #   drop - prune the affected joint and articulate the rest
+  on_missing_part: drop
 s5_articulate:
   rerun: true
   out_dirname: s5_articulate

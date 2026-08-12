@@ -202,6 +202,102 @@ def _part_has_faces(part: str, partname2face: dict) -> bool:
     return False
 
 
+def undeliverable_movable_links(articulation_tree_dict: dict, mesh_parts_dir: str) -> list:
+    """
+    Child links of movable joints whose part received no mesh faces, read
+    from the persisted part-ID map. Pure function of durable artifacts, so
+    fresh and resumed runs compute the same answer.
+    """
+    import json
+
+    p2f_path = os.path.join(mesh_parts_dir, "partname2face.json")
+    if not os.path.exists(p2f_path):
+        return []
+    with open(p2f_path) as f:
+        partname2face = json.load(f)
+
+    dropped = []
+    for joint in articulation_tree_dict.get("joints", []):
+        if joint.get("joint_type") == "fixed":
+            continue
+        child = joint["child_link"]
+        part = child[: -len("_link")] if child.endswith("_link") else child
+        if not _part_has_faces(part, partname2face):
+            dropped.append(child)
+    return sorted(set(dropped))
+
+
+def prune_tree_links(articulation_tree_dict: dict, dropped_child_links: list) -> dict:
+    """
+    Return a copy of the articulation tree with the given child links removed.
+
+    Joints whose child is dropped disappear; joints whose parent is dropped
+    are reparented to the nearest surviving ancestor, so an undeliverable
+    part in the middle of the tree does not orphan its children. A part is
+    removed from the parts list only when every instance link of that part
+    was dropped. The dropped names are recorded under 'dropped_links'.
+    """
+    import copy
+
+    tree = copy.deepcopy(articulation_tree_dict)
+    dropped = set(dropped_child_links)
+    if not dropped:
+        return tree
+
+    parent_of = {
+        j["child_link"]: j["parent_link"] for j in tree.get("joints", [])
+    }
+
+    def surviving_ancestor(link):
+        seen = set()
+        while link in dropped:
+            if link in seen or link not in parent_of:
+                return None
+            seen.add(link)
+            link = parent_of[link]
+        return link
+
+    new_joints = []
+    for joint in tree.get("joints", []):
+        if joint["child_link"] in dropped:
+            continue
+        ancestor = surviving_ancestor(joint["parent_link"])
+        if ancestor is None:
+            # Broken chain (cycle or dropped root): drop this joint too rather
+            # than emit a dangling parent.
+            logging.warning(
+                f"prune_tree_links: joint {joint.get('joint_name')!r} lost its "
+                "parent chain; dropping it as well"
+            )
+            dropped.add(joint["child_link"])
+            continue
+        if ancestor != joint["parent_link"]:
+            logging.warning(
+                f"prune_tree_links: reparenting {joint['child_link']!r} from "
+                f"dropped {joint['parent_link']!r} to {ancestor!r}"
+            )
+            joint["parent_link"] = ancestor
+        new_joints.append(joint)
+    tree["joints"] = new_joints
+
+    tree["links"] = [
+        l for l in tree.get("links", []) if l["link_name"] not in dropped
+    ]
+
+    surviving_stems = {
+        re.sub(r"_\d+$", "", l["link_name"][: -len("_link")]
+               if l["link_name"].endswith("_link") else l["link_name"])
+        for l in tree["links"]
+    }
+    tree["parts"] = [
+        p for p in tree.get("parts", [])
+        if re.sub(r"_\d+$", "", p["part_name"]) in surviving_stems
+    ]
+
+    tree["dropped_links"] = sorted(dropped)
+    return tree
+
+
 def export_mesh_parts(
     mesh: trimesh.Trimesh,
     part_segment_dict: dict,
@@ -389,13 +485,41 @@ def merge_and_center_segmented_mesh(
         part for part in required_movable_parts(articulation_tree_dict)
         if not _part_has_faces(part, partname2face)
     ]
+    dropped_parts_path = os.path.join(mesh_parts_dir, "dropped_parts.json")
     if missing:
-        raise ValueError(
+        message = (
             f"part merge left required movable part(s) {missing} without any "
             f"mesh faces (parts with faces: "
-            f"{[p for p, f in partname2face.items() if f]}); refusing to "
-            "export a scaffold whose movable parts have no geometry"
+            f"{[p for p, f in partname2face.items() if f]})"
         )
+        policy = getattr(cfg, 'on_missing_part', 'fail')
+        if policy == 'drop':
+            # Degrade gracefully: record the undeliverable parts and continue.
+            # Downstream consumers prune the affected joints from the tree and
+            # articulate the remaining parts; the geometry stays in the base.
+            logging.warning(
+                message + "; continuing per on_missing_part='drop' — the "
+                "affected joints will be pruned and the rest articulated"
+            )
+            import json
+            with open(dropped_parts_path, "w") as f:
+                json.dump(
+                    {"missing_movable_parts": missing, "policy": policy},
+                    f, indent=2,
+                )
+        elif policy == 'fail':
+            raise ValueError(
+                message + "; refusing to export a scaffold whose movable "
+                "parts have no geometry (set on_missing_part: drop to prune "
+                "them and articulate the rest)"
+            )
+        else:
+            raise ValueError(
+                f"unknown on_missing_part policy {policy!r}; use 'fail' or 'drop'"
+            )
+    elif os.path.exists(dropped_parts_path):
+        # A previous attempt dropped parts but this run delivered them all.
+        os.remove(dropped_parts_path)
 
     if verbose:
         print(f"Total faces: {np.sum(label2face_mask)}")

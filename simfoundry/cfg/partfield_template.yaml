@@ -63,6 +63,10 @@ s4_merge_mesh_parts:
   out_dirname: s4_merge_mesh_parts
   model_name: gemini-3-pro-preview
   interactive_correction: true
+  # What to do when a movable part named by stage 2 gets no mesh faces:
+  #   fail - stop the object (benchmark behavior)
+  #   drop - prune the affected joint and articulate the rest
+  on_missing_part: drop
 
 s5_articulate:
   rerun: true

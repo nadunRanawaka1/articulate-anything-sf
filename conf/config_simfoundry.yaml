@@ -8,7 +8,10 @@ out_dir: "results/default_cabinet"
 dataset_dir: "datasets/partnet-mobility-v0-processed/partnet-mobility-v0/dataset"
 api_key: null
 gcloud_project: ${oc.env:GCLOUD_PROJECT,null}
-gcloud_location: us-west1
+# "global" is the only endpoint that serves every model used here: regional
+# endpoints (e.g. us-west1) do not serve gemini-3.1-pro-preview and fail with
+# 404s mid-run.
+gcloud_location: global
 # Where VLM calls run:
 #   vertex    -> Vertex AI, authenticated with gcloud ADC + gcloud_project.
 #                Serves both Gemini and Claude. (default)

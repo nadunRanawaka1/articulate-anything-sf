@@ -6,12 +6,15 @@ out_dir: "results/default_cabinet"
 dataset_dir: "datasets/partnet-mobility-v0-processed/partnet-mobility-v0/dataset"
 api_key: null
 gcloud_project: ${oc.env:GCLOUD_PROJECT,null}
-gcloud_location: us-west1
+# "global" is the only endpoint that serves every model used here: regional
+# endpoints (e.g. us-west1) do not serve gemini-3.1-pro-preview and fail with
+# 404s mid-run.
+gcloud_location: global
 # vertex -> Vertex AI via gcloud ADC (serves both Gemini and Claude)
 # anthropic -> the direct Anthropic API (Claude only, needs ANTHROPIC_API_KEY)
 vlm_backend: vertex
-# Vertex region for Claude only: Claude is not served in every Gemini region
-# (us-west1 above serves Gemini but not Claude). "global" is the safe choice.
+# Vertex region for Claude only: not every Gemini region serves Claude, so it
+# gets its own knob. "global" is the safe choice.
 claude_location: global
 n_retries: 3 # number of retries for the LLM agent
 parallel: 4

@@ -248,6 +248,34 @@ def create_semantics_file(out_dir: str, articulation_tree_dict: dict):
         for link_name, semantic in rows.items():
             f.write(f"{link_name} {semantic} {link_name}\n")
 
+def publish_rigid_scaffold(cfg: DictConfig):
+    """
+    Publish the fixed scaffold as the final asset when the articulation tree
+    has no movable joints left (rigid object, or every movable part was
+    dropped under on_missing_part='drop'). Running stage 5 on such a tree
+    would only fail: the renderer produces no motion video and the
+    zero-movable publish gate correctly refuses the output.
+    """
+    object_dir = join_path(cfg.out_dir, cfg.object_name)
+    final_urdf = join_path(object_dir, "mobility_final.urdf")
+    shutil.copy(join_path(object_dir, "mobility.urdf"), final_urdf)
+    edit_urdf_to_use_mesh_type(final_urdf, '.glb')
+
+    object_results_dir = join_path(object_dir, "../../results")
+    os.makedirs(object_results_dir, exist_ok=True)
+    shutil.copy(final_urdf, join_path(object_results_dir, "mobility.urdf"))
+    shutil.copytree(
+        join_path(object_dir, "meshes"),
+        join_path(object_results_dir, "meshes"),
+        dirs_exist_ok=True,
+    )
+    edit_urdf_to_use_relative_paths(
+        join_path(object_results_dir, "mobility.urdf"))
+
+    print("Published rigid scaffold (no movable joints) to "
+          f"{object_results_dir}")
+
+
 def assert_articulated_prediction(urdf_path: str, articulation_tree_dict: dict):
     """
     A parseable URDF is not an articulated prediction. Refuse to publish a
@@ -696,6 +724,19 @@ def articulate_simfoundry(
         create_semantics_file(
             join_path(cfg.out_dir, cfg.object_name), articulation_tree_dict
         )
+
+    movable_joints = [
+        j for j in articulation_tree_dict.get('joints', [])
+        if j.get('joint_type') != 'fixed'
+    ]
+    if not movable_joints:
+        logging.warning(
+            "articulation tree has no movable joints (rigid object, or every "
+            "movable part was dropped); publishing the fixed scaffold as the "
+            "final asset instead of running joint articulation"
+        )
+        publish_rigid_scaffold(cfg)
+        return None
     
     
     # Auto-compute raise offset

@@ -452,6 +452,23 @@ def process_single_object(cfg, object_config, reference_object_name: str = None)
         urdf_path = generate_base_urdf(s4_cfg, articulation_tree_dict, verbose=cfg.verbose)
         step_timings['Step 4: Merge & URDF'] = time.time() - step_start
 
+    # Degrade gracefully: parts the merge could not deliver (per the persisted
+    # part-ID map) are pruned from the tree before stage 5 so the rest of the
+    # asset still articulates. Recomputed from durable artifacts on every run,
+    # so resumed runs that skip step 4 see the same pruned tree.
+    if s4_cfg.get('on_missing_part', 'fail') == 'drop':
+        from postprocess_segmentation.merge import (
+            prune_tree_links,
+            undeliverable_movable_links,
+        )
+        dropped_links = undeliverable_movable_links(
+            articulation_tree_dict, s4_cfg.mesh_parts_dir)
+        if dropped_links:
+            print(f"  WARNING: dropping undeliverable movable link(s) "
+                  f"{dropped_links}; articulating the rest "
+                  "(on_missing_part: drop)")
+            articulation_tree_dict = prune_tree_links(
+                articulation_tree_dict, dropped_links)
 
     # =========== Step 5: Articulate the object ===========
     step_start = time.time()

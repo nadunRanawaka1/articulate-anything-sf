@@ -65,12 +65,16 @@ def generate_base_urdf(cfg: DictConfig, articulation_tree_dict: dict, verbose: b
     
     links = articulation_tree_dict.get('links', [])
     joints = articulation_tree_dict.get('joints', [])
-    
+
+    fixed_part_name = articulation_tree_dict.get('fixed_part_name', 'base') if articulation_tree_dict else 'base'
+    if verbose:
+        print(f"  Fixed part name: {fixed_part_name}")
+
     # Map each link to its part mesh by exact stem ("door_link" -> door.obj),
     # tolerating an instance suffix on either side ("door_1_link" -> door.obj).
     # The previous substring matching also attached "door.obj" to
     # "door_handle_link"; a link with no unambiguous mesh now stays empty and
-    # movable links are checked below before the scaffold is written.
+    # movable links are checked below before any scaffold element is written.
     def _meshes_for_stem(stem):
         if stem in mesh_files:
             return [mesh_files[stem]]
@@ -83,12 +87,45 @@ def generate_base_urdf(cfg: DictConfig, articulation_tree_dict: dict, verbose: b
     for link in links:
         link_name = link['link_name']
         stem = link_name[:-len('_link')] if link_name.endswith('_link') else link_name
-        link_to_meshes[link_name] = _meshes_for_stem(stem)
-    
-    fixed_part_name = articulation_tree_dict.get('fixed_part_name', 'base') if articulation_tree_dict else 'base'
-    if verbose:
-        print(f"  Fixed part name: {fixed_part_name}")
-    
+        meshes = _meshes_for_stem(stem)
+        if not meshes and link_name.lower() == fixed_part_name.lower():
+            if fixed_part_name in mesh_files:
+                meshes = [mesh_files[fixed_part_name]]
+        link_to_meshes[link_name] = meshes
+
+    # Every movable link must carry geometry: a meshless movable link renders
+    # as nothing, articulates nothing, and only fails much later (or never).
+    movable_children = {
+        joint['child_link'] for joint in joints
+        if joint.get('joint_type') != 'fixed'
+    }
+    meshless_movable = sorted(
+        link_name for link_name in movable_children
+        if not link_to_meshes.get(link_name)
+    )
+    if meshless_movable:
+        policy = cfg.get('on_missing_part', 'fail')
+        if policy == 'drop':
+            print(f"  WARNING: dropping movable link(s) {meshless_movable} "
+                  "with no unambiguous part mesh; articulating the rest "
+                  "(on_missing_part: drop)")
+            from postprocess_segmentation.merge import prune_tree_links
+            pruned = prune_tree_links(articulation_tree_dict, meshless_movable)
+            links = pruned.get('links', [])
+            joints = pruned.get('joints', [])
+        elif policy == 'fail':
+            raise ValueError(
+                f"scaffold URDF cannot be built: movable link(s) "
+                f"{meshless_movable} have no unambiguous part mesh in "
+                f"{mesh_parts_dir} (available part meshes: "
+                f"{sorted(mesh_files)}); set on_missing_part: drop to prune "
+                "them and articulate the rest"
+            )
+        else:
+            raise ValueError(
+                f"unknown on_missing_part policy {policy!r}; use 'fail' or 'drop'"
+            )
+
     # Find the root link (the one that's not a child in any joint)
     child_links = set(joint['child_link'] for joint in joints)
     all_links = set(link['link_name'] for link in links)
@@ -121,13 +158,6 @@ def generate_base_urdf(cfg: DictConfig, articulation_tree_dict: dict, verbose: b
         link_elem = ET.SubElement(root, 'link', name=link_name)
         
         meshes = link_to_meshes.get(link_name, [])
-        
-        # If no meshes found, check if this is the fixed part
-        if not meshes and link_name.lower() == fixed_part_name.lower():
-            if fixed_part_name in mesh_files:
-                meshes = [mesh_files[fixed_part_name]]
-
-        link_to_meshes[link_name] = meshes
 
         if verbose:
             print(f"  Link '{link_name}': {len(meshes)} mesh(es)")
@@ -168,23 +198,6 @@ def generate_base_urdf(cfg: DictConfig, articulation_tree_dict: dict, verbose: b
             ET.SubElement(geometry, 'mesh', filename=mesh_path)
             ET.SubElement(collision, 'origin', rpy="0.0 0.0 0.0", xyz=mesh_origin)
     
-    # Every movable link must carry geometry: a meshless movable link renders
-    # as nothing, articulates nothing, and only fails much later (or never).
-    movable_children = {
-        joint['child_link'] for joint in joints
-        if joint.get('joint_type') != 'fixed'
-    }
-    meshless_movable = sorted(
-        link_name for link_name in movable_children
-        if not link_to_meshes.get(link_name)
-    )
-    if meshless_movable:
-        raise ValueError(
-            f"scaffold URDF cannot be built: movable link(s) {meshless_movable} "
-            f"have no unambiguous part mesh in {mesh_parts_dir} "
-            f"(available part meshes: {sorted(mesh_files)})"
-        )
-
     # Create joints
     for joint in joints:
         joint_name = joint['joint_name']
