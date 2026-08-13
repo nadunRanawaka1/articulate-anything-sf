@@ -69,7 +69,7 @@ s3_segment_mesh:
   explosion_factor: 0.4
   num_clusters: 10
 
-  point_num: 500000
+  point_num: 100000
   threshold: 0.85
   prompt_num: 400
   smooth_iterations: 3  # Iterations to smooth jagged segment boundaries (0 = disabled)
