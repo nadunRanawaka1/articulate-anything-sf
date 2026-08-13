@@ -66,10 +66,14 @@ pip install -e .
 echo "Installing CoTracker..."
 (
   cd deps
+  # Pin: cotracker_utils.py passes v2=True, which needs this checkout's predictor API,
+  # and the shipped cotracker2v1.pth checkpoint matches the CoTracker2 architecture.
+  COTRACKER_COMMIT="${COTRACKER_COMMIT:-82e02e8029753ad4ef13cf06be7f4fc5facdda4d}"
   if [ ! -d "co-tracker" ]; then
     git clone https://github.com/facebookresearch/co-tracker
   fi
   cd co-tracker
+  git checkout --detach "${COTRACKER_COMMIT}"
   pip install -e .
   pip install matplotlib flow_vis tqdm tensorboard
   
