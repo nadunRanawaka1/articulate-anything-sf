@@ -10,9 +10,24 @@ eval "$(mamba shell hook --shell bash)"
 # ==============================================================================
 # SYSTEM DEPENDENCIES (run first)
 # ==============================================================================
-echo "=== Installing system dependencies (this step may prompt for your sudo password) ==="
-sudo -v
-sudo apt-get install -y libx11-6 libgl1 libxrender1
+# Skip the sudo block when the libraries are already installed, so a headless run
+# (where sudo cannot prompt) does not die here needlessly.
+APT_MISSING=()
+for pkg in libx11-6 libgl1 libxrender1; do
+  dpkg -s "$pkg" >/dev/null 2>&1 || APT_MISSING+=("$pkg")
+done
+if [ "${#APT_MISSING[@]}" -gt 0 ]; then
+  echo "=== Installing system dependencies: ${APT_MISSING[*]} (this step may prompt for your sudo password) ==="
+  if ! sudo -v; then
+    echo "ERROR: sudo is required to install: ${APT_MISSING[*]}" >&2
+    echo "       Install them yourself (sudo apt-get install -y ${APT_MISSING[*]})," >&2
+    echo "       or rerun this script from a terminal where sudo can prompt." >&2
+    exit 1
+  fi
+  sudo apt-get install -y "${APT_MISSING[@]}"
+else
+  echo "=== System dependencies already present — skipping apt-get ==="
+fi
 
 
 if [ ! -d "deps" ]; then

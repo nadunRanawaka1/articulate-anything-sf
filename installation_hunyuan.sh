@@ -7,9 +7,12 @@ trap 'echo ""; echo "ERROR: Command failed at line $LINENO: $BASH_COMMAND"; exit
 
 eval "$(mamba shell hook --shell bash)"
 
-CUDA_VERSION="12.8"
-export CUDA_HOME=/usr/local/cuda-${CUDA_VERSION}
-export LIBRARY_PATH=$CUDA_HOME/lib64/stubs:$LIBRARY_PATH
+# The torch pinned below is +cu128, so CUDA 12.8 is the matching toolkit. Honor a
+# caller-supplied CUDA_HOME rather than assuming the fixed system path exists (see the
+# nvcc fallback after env activation for hosts that have neither).
+CUDA_VERSION="${CUDA_VERSION:-12.8}"
+export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-${CUDA_VERSION}}"
+export LIBRARY_PATH="${CUDA_HOME}/lib64/stubs:${LIBRARY_PATH:-}"
 
 if [ ! -d "deps" ]; then
   mkdir deps
@@ -40,6 +43,29 @@ git submodule update --init --recursive
 
 mamba create -n articulate-anything-hunyuan python=3.10 -y
 mamba activate articulate-anything-hunyuan
+
+# nvcc is needed for the source builds below (flash-attn, chamfer3D), and torch's
+# cpp_extension refuses a toolkit whose version does not match the +cu128 torch pinned
+# below. If CUDA_HOME does not hold one, fall back to an nvcc on PATH only when it
+# reports the matching release, and otherwise conda-install the matching toolkit into
+# this env instead of failing on a fixed system path.
+if [ ! -x "${CUDA_HOME}/bin/nvcc" ]; then
+  NVCC_PATH="$(command -v nvcc 2>/dev/null || true)"
+  if [ -n "${NVCC_PATH}" ] && "${NVCC_PATH}" --version 2>/dev/null | grep -q "release ${CUDA_VERSION}"; then
+    CUDA_HOME="$(dirname "$(dirname "${NVCC_PATH}")")"
+  else
+    if [ -n "${NVCC_PATH}" ]; then
+      echo "nvcc on PATH (${NVCC_PATH}) does not report CUDA ${CUDA_VERSION}; installing cuda-toolkit ${CUDA_VERSION} into the env instead."
+    else
+      echo "nvcc not found at ${CUDA_HOME}/bin/nvcc or on PATH; installing cuda-toolkit ${CUDA_VERSION} into the env."
+    fi
+    mamba install -c nvidia "cuda-toolkit=${CUDA_VERSION}" -y
+    CUDA_HOME="${CONDA_PREFIX}"
+  fi
+  export CUDA_HOME
+  export LIBRARY_PATH="${CUDA_HOME}/lib64/stubs:${LIBRARY_PATH:-}"
+fi
+export PATH="${CUDA_HOME}/bin:${PATH}"
 # pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126
 pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu128
 pip install "setuptools<80"
@@ -51,12 +77,18 @@ pip install ninja psutil
 pip install flash-attn --no-build-isolation
 pip install huggingface_hub timm omegaconf
 pip install viser fpsample trimesh numba gradio pymeshlab
-cd P3-SAM/utils/chamfer3D
-python setup.py install
 
-cd ../../ # back to P3-SAM
-
+cd P3-SAM
 pip install -e ".[demo,dev]"
+
+# chamfer3D is only imported by the P3-SAM gradio demo (auto_mask_no_postprocess), not by
+# the pipeline path (auto_mask). Build it AFTER the editable installs and tolerate failure,
+# so a CUDA toolchain problem cannot take P3-SAM, articulate-anything and CoTracker down
+# with it.
+if ! (cd utils/chamfer3D && python setup.py install); then
+  echo "WARNING: chamfer3D CUDA extension failed to build; continuing." >&2
+  echo "         Only the P3-SAM gradio demo needs it; the pipeline does not." >&2
+fi
 
 cd ../../../ # back to articulate-anything
 
