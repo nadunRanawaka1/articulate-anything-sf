@@ -7,9 +7,8 @@ trap 'echo ""; echo "ERROR: Command failed at line $LINENO: $BASH_COMMAND"; exit
 
 eval "$(mamba shell hook --shell bash)"
 
-# The torch pinned below is +cu128, so CUDA 12.8 is the matching toolkit. Honor a
-# caller-supplied CUDA_HOME rather than assuming the fixed system path exists (see the
-# nvcc fallback after env activation for hosts that have neither).
+# torch below is pinned +cu128; honor a caller-supplied CUDA_HOME rather than
+# assuming the fixed system path exists.
 CUDA_VERSION="${CUDA_VERSION:-12.8}"
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-${CUDA_VERSION}}"
 export LIBRARY_PATH="${CUDA_HOME}/lib64/stubs:${LIBRARY_PATH:-}"
@@ -44,11 +43,8 @@ git submodule update --init --recursive
 mamba create -n articulate-anything-hunyuan python=3.10 -y
 mamba activate articulate-anything-hunyuan
 
-# nvcc is needed for the source builds below (flash-attn, chamfer3D), and torch's
-# cpp_extension refuses a toolkit whose version does not match the +cu128 torch pinned
-# below. If CUDA_HOME does not hold one, fall back to an nvcc on PATH only when it
-# reports the matching release, and otherwise conda-install the matching toolkit into
-# this env instead of failing on a fixed system path.
+# The source builds below (flash-attn, chamfer3D) need an nvcc matching the +cu128
+# torch: use CUDA_HOME's, else a matching nvcc on PATH, else conda-install the toolkit.
 if [ ! -x "${CUDA_HOME}/bin/nvcc" ]; then
   NVCC_PATH="$(command -v nvcc 2>/dev/null || true)"
   if [ -n "${NVCC_PATH}" ] && "${NVCC_PATH}" --version 2>/dev/null | grep -q "release ${CUDA_VERSION}"; then
@@ -81,10 +77,8 @@ pip install viser fpsample trimesh numba gradio pymeshlab
 cd P3-SAM
 pip install -e ".[demo,dev]"
 
-# chamfer3D is only imported by the P3-SAM gradio demo (auto_mask_no_postprocess), not by
-# the pipeline path (auto_mask). Build it AFTER the editable installs and tolerate failure,
-# so a CUDA toolchain problem cannot take P3-SAM, articulate-anything and CoTracker down
-# with it.
+# chamfer3D is used only by the P3-SAM gradio demo, not the pipeline. Build it after
+# the editable installs and tolerate failure so it cannot take the whole env down.
 if ! (cd utils/chamfer3D && python setup.py install); then
   echo "WARNING: chamfer3D CUDA extension failed to build; continuing." >&2
   echo "         Only the P3-SAM gradio demo needs it; the pipeline does not." >&2

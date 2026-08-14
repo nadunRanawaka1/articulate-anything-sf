@@ -10,8 +10,7 @@ eval "$(mamba shell hook --shell bash)"
 # ==============================================================================
 # SYSTEM DEPENDENCIES (run first)
 # ==============================================================================
-# Skip the sudo block when the libraries are already installed, so a headless run
-# (where sudo cannot prompt) does not die here needlessly.
+# Skip sudo entirely when the libraries are already installed (headless runs cannot prompt).
 APT_MISSING=()
 for pkg in libx11-6 libgl1 libxrender1; do
   dpkg -s "$pkg" >/dev/null 2>&1 || APT_MISSING+=("$pkg")
