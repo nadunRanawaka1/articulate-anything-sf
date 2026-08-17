@@ -108,6 +108,26 @@ s5_articulate:
   articulation_cfg_path: "conf/config_simfoundry.yaml"
 
 # Hydra settings
+s5b_estimate_physics:
+  # Physical-property estimation for the published articulation result: 
+  enabled: true
+  rerun: false
+  model_name: gemini-3.1-pro-preview  # same choices as s2/s4; null -> inherit s2's model
+  use_vlm: true          # false -> offline: defaults + user_values_path only
+  # Optional JSON with known values (standalone use with your own meshes):
+  #   {"<object_name>": {"scale": 1.2,
+  #                      "parts":  {"<link>":  {"mass_kg": 2.0, "friction": 0.6}},
+  #                      "joints": {"<joint>": {"damping": 0.3, "friction": 0.05}}}}
+  # Known values override the VLM estimates; "scale" maps mesh units to meters
+  # for size-aware mass estimation (omit it if your meshes are unscaled).
+  user_values_path: null
+s6_refine_articulation:
+  # Interactive UI to refine the published articulation (joint limits, pivots,
+  # axes, dynamics) after step 5. Off by default
+  enabled: false
+  port: 8060
+  open_browser: true
+  max_faces_per_link: 40000  # display-only mesh decimation threshold
 hydra:
   job:
     chdir: true

@@ -5,6 +5,11 @@ Step 2: recognize parts and generate articulation tree
 Step 3: segment the object with Hunyuan 3D-part
 Step 4: merge segmented parts and generate dummy URDF
 Step 5: articulate the object
+Step 5b: estimate physical properties (per-part mass/surface friction,
+        per-joint damping/friction) with one VLM call; the single source of
+        dynamics for downstream sim-ready importers
+Step 6 (optional, s6_refine_articulation.enabled): interactive refinement UI
+        for the published results (joint limits, pivots, axes, dynamics)
 
 # TODO: we don't need fixed part, it is always the base.
 # TODO: change filepaths in final generated urdf to be relative to the object directory.
@@ -491,7 +496,59 @@ def process_single_object(cfg, object_config, reference_object_name: str = None)
         print(f"Running Step 5: Articulate the object")
         articulate_simfoundry(s5_cfg, articulation_tree_dict, verbose=cfg.verbose)
         step_timings['Step 5: Articulate'] = time.time() - step_start
-    
+
+    # =========== Step 5b: Estimate physical properties ===========
+    # The articulation pipeline is the sole source of dynamics: one VLM call
+    # estimates per-part mass/surface friction and per-joint damping/friction,
+    # written into results/mobility.urdf (<dynamics>) and
+    # results/physics_properties.json for the sim-ready importer.
+    step_start = time.time()
+    s5b_cfg = OmegaConf.create(cfg.get('s5b_estimate_physics', None) or {})
+    results_dir = f"{object_root}/results"
+    from estimate_physics import ensure_physics_current
+    if not s5b_cfg.get('enabled', True):
+        pass
+    elif not Path(f"{results_dir}/mobility.urdf").exists():
+        print("Step 5b: no published mobility.urdf; skipping physics estimation")
+    elif not s5b_cfg.get('rerun', False) and ensure_physics_current(results_dir):
+        # Existing estimates still match the URDF's joints; ensure_physics_current
+        # also re-applied <dynamics> if a step-5 rerun republished the URDF
+        # without them. A stale/mismatched file falls through to re-estimation.
+        step_timings['Step 5b: Physics'] = 0.0  # Skipped
+    else:
+        print(f"Running Step 5b: Estimate physical properties")
+        # Scene-level VLM settings apply unless the step overrides them,
+        # mirroring steps 2/4/5.
+        s5b_cfg.model_name = s5b_cfg.get('model_name', None) or cfg.s2_generate_articulation_tree.model_name
+        s5b_cfg.gcloud_project = cfg.gcloud_project
+        s5b_cfg.gcloud_location = cfg.gcloud_location
+        s5b_cfg.claude_location = cfg.get('claude_location', None)
+        s5b_cfg.vlm_backend = cfg.get('vlm_backend', None)
+        from estimate_physics import estimate_physics_properties, load_user_values
+        try:
+            # Optional per-object inputs. `scale` (objects entry) and the
+            # user-values JSON are both optional so the workflow runs
+            # unchanged on meshes brought without any pipeline context.
+            scale = object_config.get('scale', None) if hasattr(object_config, 'get') else None
+            user_values = load_user_values(s5b_cfg.get('user_values_path', None)).get(object_name, {})
+            estimate_physics_properties(
+                s5b_cfg, results_dir, object_name,
+                image_path=object_config['image_path'],
+                scale=float(scale) if scale is not None else None,
+                use_vlm=s5b_cfg.get('use_vlm', True),
+                user_values=user_values,
+                verbose=cfg.verbose,
+            )
+            step_timings['Step 5b: Physics'] = time.time() - step_start
+        except Exception as e:
+            # Physics estimation is additive: a VLM hiccup must not discard the
+            # already-published articulation. Downstream falls back to its own
+            # estimates when physics_properties.json is absent.
+            print(f"  WARNING: physics estimation failed ({e}); "
+                  "downstream will fall back to its own estimates")
+            if cfg.verbose:
+                print(traceback.format_exc())
+
     object_total_time = time.time() - object_start_time
     
     # Print timing summary for this object
@@ -510,6 +567,42 @@ def process_single_object(cfg, object_config, reference_object_name: str = None)
         'steps': step_timings,
         'total_time': object_total_time
     }
+
+
+def run_interactive_refinement(cfg, object_names: list):
+    """Step 6 (optional): open the articulation refinement UI on the published
+    results of the given objects. Gated by s6_refine_articulation.enabled so
+    the generated workflow stays unattended by default."""
+    s6_cfg = cfg.get('s6_refine_articulation', None)
+    if s6_cfg is None or not s6_cfg.get('enabled', False):
+        return
+
+    results_dirs = {}
+    for name in object_names:
+        results_dir = f"{cfg.root_dir}/{cfg.scene_name}/{name}/results"
+        if os.path.exists(f"{results_dir}/mobility.urdf"):
+            results_dirs[name] = results_dir
+    if not results_dirs:
+        print("Step 6: no published articulation results to refine; skipping.")
+        return
+
+    print(f"\nRunning Step 6: Interactive articulation refinement "
+          f"({len(results_dirs)} object(s))")
+    from refine_articulation import interactive_articulation_refinement
+    try:
+        interactive_articulation_refinement(
+            results_dirs,
+            port=s6_cfg.get('port', 8060),
+            open_browser=s6_cfg.get('open_browser', True),
+            max_faces_per_link=s6_cfg.get('max_faces_per_link', 40000),
+            verbose=cfg.verbose,
+        )
+    except Exception as e:
+        # Refinement is a post-processing convenience: a UI failure must not
+        # invalidate the already-published articulation results.
+        print(f"Interactive articulation refinement failed: {e}")
+        if cfg.verbose:
+            print(traceback.format_exc())
 
 
 @hydra.main(config_name="real2sim_cfg", config_path=CFG_DIR, version_base="1.3")
@@ -558,6 +651,9 @@ def main(cfg):
                     'total_time': 0
                 })
         
+        run_interactive_refinement(
+            cfg, [r['object_name'] for r in all_results if 'error' not in r])
+
         # Print final summary
         pipeline_total_time = time.time() - pipeline_start_time
         print(f"\n{'='*80}")
@@ -587,10 +683,11 @@ def main(cfg):
         try:
             result = process_single_object(cfg, object_config)
             all_results.append(result)
+            run_interactive_refinement(cfg, [result['object_name']])
         except Exception as e:
             print(f"Error processing single object: {e}")
             print(f"Traceback: {traceback.format_exc()}")
-        
+
         # Print final summary for single object
         pipeline_total_time = time.time() - pipeline_start_time
         print(f"\n{'='*80}")

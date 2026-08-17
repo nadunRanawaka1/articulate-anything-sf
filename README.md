@@ -71,6 +71,16 @@ ______________________________________________________________________
 > - **Mesh part-segmentation** has three interchangeable backends selected by `segment_method`:
 >   [`samesh`](https://github.com/gtangg12/samesh), [`Hunyuan3D-Part`](https://github.com/Tencent-Hunyuan/Hunyuan3D-Part),
 >   and [`PartField`](https://github.com/nv-tlabs/PartField).
+> - **Physics estimation (step 5b):** one VLM call per object estimates per-part mass and surface
+>   friction plus per-joint damping/friction, written into the published `mobility.urdf`
+>   (`<dynamics>`) and `results/physics_properties.json` — the single source of dynamics for
+>   downstream sim-ready importers (`s5b_estimate_physics` config; supports user-supplied values
+>   and a fully offline mode for standalone meshes).
+> - **Interactive refinement UIs:** a segmentation-correction UI (step 4,
+>   `s4_merge_mesh_parts.interactive_correction`) and an articulation-refinement UI for the published
+>   results — joint limits, pivots, axes, and dynamics (step 6, `s6_refine_articulation.enabled`, or
+>   post-hoc via `simfoundry/run_articulation_refinement.py`); see
+>   [`simfoundry/refine_articulation/README.md`](simfoundry/refine_articulation/README.md).
 > - **Install** uses the per-backend scripts described in [Installation](#installation) (separate conda envs).
 >
 > The upstream documentation below is preserved and still applies to the standalone
