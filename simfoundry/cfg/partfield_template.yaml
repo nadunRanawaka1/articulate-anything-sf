@@ -56,7 +56,7 @@ s3_segment_mesh:
   # Explosion settings (partfield only)
   explode: true  # If true, only render exploded views
   explosion_factor: 0.5  # How much to explode (0=none, 1=full distance)
-  num_clusters: 25  # Number of segments for partfield
+  num_clusters: 10  # Number of segments for partfield
 
 s4_merge_mesh_parts:
   rerun: false

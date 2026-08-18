@@ -622,6 +622,11 @@ def compute_prismatic_seat_offset(
     axis = axis / np.linalg.norm(axis)
     info = {"seat_offset": 0.0, "status": "unknown", "n_pairs": 0, "raw_gap": None}
 
+    all_ca = np.asarray(child_points, dtype=float) @ axis
+    all_pa = np.asarray(parent_points, dtype=float) @ axis
+    info["child_axial_span"] = [float(all_ca.min()), float(all_ca.max())]
+    info["parent_axial_span"] = [float(all_pa.min()), float(all_pa.max())]
+
     child_normals = np.asarray(child_normals, dtype=float)
     parent_normals = np.asarray(parent_normals, dtype=float)
     c_face = (child_normals @ axis) < -normal_cos_threshold
@@ -680,6 +685,28 @@ def compute_prismatic_seat_offset(
     info["seat_offset"] = offset
     info["status"] = "seated" if offset > 0 else "already_seated"
     return offset, info
+
+
+def engagement_capped_travel(child_axial_span, parent_axial_span, seat_offset, travel,
+                             min_engagement_frac=0.10):
+    """
+    Caps prismatic travel so that at q=upper at least `min_engagement_frac` of the
+    child's axial length remains behind the parent's front plane — the link can slide
+    out but never fully leave its parent. Spans are measured at the scanned pose;
+    q=0 sits `seat_offset` toward closed from it. The scanned pose (q=seat_offset)
+    always stays reachable. Returns the (possibly reduced) travel.
+    """
+    c0, c1 = float(child_axial_span[0]), float(child_axial_span[1])
+    p1 = float(parent_axial_span[1])
+    child_len = c1 - c0
+    if child_len <= 0 or travel <= 0:
+        return travel
+    engagement_closed = p1 - (c0 - seat_offset)
+    min_keep = min_engagement_frac * child_len
+    if engagement_closed <= min_keep:
+        return travel  # barely engaged even at closed; the cap is not meaningful here
+    cap = engagement_closed - min_keep
+    return float(min(travel, max(cap, seat_offset + 1e-3)))
 
 
 def world_to_local(
@@ -1713,6 +1740,7 @@ class Robot(NamedElement):
         global_upper_point: List[float],
         force_overwrite: bool = True,
         seat_closed: bool = True,
+        min_engagement_frac: float = 0.10,
     ) -> None:
         """
         Creates or updates a prismatic joint between the specified child and parent links.
@@ -1752,6 +1780,20 @@ class Robot(NamedElement):
                 if seat > 0:
                     global_lower_point = -seat * axis_hat
                     global_upper_point = global_lower_point + max(travel, seat + 1e-3) * axis_hat
+
+                # Engagement cap: the link may slide out but never fully leave its parent.
+                c_span = seat_info.get("child_axial_span")
+                p_span = seat_info.get("parent_axial_span")
+                if c_span and p_span and min_engagement_frac is not None:
+                    travel_now = float(np.linalg.norm(global_upper_point - global_lower_point))
+                    capped = engagement_capped_travel(
+                        c_span, p_span, seat, travel_now,
+                        min_engagement_frac=min_engagement_frac)
+                    if capped < travel_now:
+                        global_upper_point = global_lower_point + capped * axis_hat
+                        logging.info(
+                            f"[engagement_cap] {child_link_name}: travel "
+                            f"{travel_now:.4f} -> {capped:.4f}")
 
         # Transform points from simulator frame to mesh frame if needed
         global_lower_point = self._transform_from_simulator_frame(global_lower_point)
