@@ -26,6 +26,34 @@ from .visualization import SegmentFigureBuilder
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
+HELP_STYLES = {
+    'details': {
+        'backgroundColor': '#fffde7',
+        'border': '1px solid #ffe082',
+        'borderRadius': '5px',
+        'padding': '8px 14px',
+        'margin': '0 auto 14px auto',
+        'maxWidth': '1150px',
+        'fontSize': '13px',
+        'color': '#444',
+        'textAlign': 'left',
+    },
+    'summary': {
+        'cursor': 'pointer',
+        'fontWeight': 'bold',
+        'color': '#795548',
+    },
+    'tab_intro': {
+        'fontSize': '12px',
+        'color': '#555',
+        'backgroundColor': '#f1f8e9',
+        'border': '1px solid #dcedc8',
+        'borderRadius': '4px',
+        'padding': '6px 10px',
+        'marginBottom': '10px',
+    },
+}
+
 
 class SegmentCorrectionApp:
     """
@@ -74,7 +102,14 @@ class SegmentCorrectionApp:
         )
         
         # Result holder for thread communication
-        self.result_holder = {'result': None, 'done': False}
+        self.result_holder = {'result': None, 'done': False, 'cancelled': False}
+
+        # Pristine copies returned on Cancel: splits/merges mutate
+        # face2label/label2face_mask in place, and returning the mutated
+        # arrays with the original assignment would silently drop the
+        # split-off faces from their parts downstream.
+        self._orig_face2label = self.face2label.copy()
+        self._orig_label2face_mask = self.label2face_mask.copy()
 
         # Last user camera (from any viewer's relayoutData). Injected into
         # every rebuilt figure: plotly's uirevision-based camera preservation
@@ -178,6 +213,52 @@ class SegmentCorrectionApp:
             )
         return html_parts
     
+    def _help_panel(self):
+        """Collapsible walkthrough for first-time users (pure HTML, no callbacks)."""
+        from dash import html
+
+        li_style = {'marginBottom': '4px'}
+        return html.Details([
+            html.Summary("❓  New here? Click for a quick guide",
+                         style=HELP_STYLES['summary']),
+            html.P([
+                html.B("What you're looking at: "),
+                "the object's mesh was automatically cut into numbered patches called ",
+                html.B("segments"), ". Your job is to make sure every segment belongs to the "
+                "correct ", html.B("part"), " — the functional pieces of the object "
+                "(base, door, drawer, …). Segments are colored by the part they are "
+                "currently assigned to (gray = unassigned). Hover over the 3D view to see a "
+                "segment's number, its part, and its size.",
+            ], style={'marginBottom': '6px'}),
+            html.P([
+                html.B("3D view controls: "),
+                "left-drag rotates · scroll zooms · right-drag pans. The ",
+                html.B("Explosion"), " slider pulls the segments apart so you can see and "
+                "click pieces hidden inside (0 = the object's true shape).",
+            ], style={'marginBottom': '6px'}),
+            html.B("Typical workflow:"),
+            html.Ol([
+                html.Li([html.B("Overview tab"), " — assign segments to parts: click segments "
+                         "in the 3D view (click again to deselect) or pick them from the list, "
+                         "choose the target part, press “Reassign All Selected”."],
+                        style=li_style),
+                html.Li([html.B("Segments tab"), " — only needed when one segment wrongly "
+                         "covers two different parts (e.g. a drawer front fused to the cabinet "
+                         "body): select the segment and cut it apart with one of the split "
+                         "tools, then assign the new piece. Merging is optional — one part may "
+                         "own many segments."], style=li_style),
+                html.Li([html.B("Parts tab"), " — final check: view each part on its own and "
+                         "move any segments that don't belong there."], style=li_style),
+            ], style={'marginTop': '4px', 'marginBottom': '6px'}),
+            html.P([
+                html.B("Finishing (buttons on the Overview tab): "),
+                "“Done — Accept Changes” saves everything (segments still unassigned are "
+                "automatically given to the base part); “Cancel” discards all changes. "
+                "Mistakes are fine — the ", html.B("Undo"), " button on the Segments tab "
+                "reverts recent splits, merges, and reassignments from any tab.",
+            ], style={'marginBottom': '2px'}),
+        ], style=HELP_STYLES['details'])
+
     def _setup_app(self):
         """Setup the Dash application with three tabs."""
         from dash import Dash, html, dcc, Input, Output, State, callback_context
@@ -218,8 +299,14 @@ class SegmentCorrectionApp:
                 
                     # Right: Controls
                     html.Div([
+                        html.Div([
+                            html.B("Goal: "),
+                            "give every segment the right part. Click segments in the 3D "
+                            "view (click again to deselect), pick the target part, press "
+                            "Reassign. Repeat until each part is one solid color.",
+                        ], style=HELP_STYLES['tab_intro']),
                         html.H4("Batch Assign Segments"),
-                        html.P("Enter segment numbers (comma-separated) or click to select:", 
+                        html.P("Click segments in the 3D view or pick them from this list:",
                                style={'fontSize': '12px', 'color': '#666'}),
                         dcc.Dropdown(
                             id='overview-segments-dropdown',
@@ -238,6 +325,7 @@ class SegmentCorrectionApp:
                             placeholder="Select part..."
                         ),
                         html.Button("Reassign All Selected", id='overview-reassign-btn', n_clicks=0,
+                                   title="Move every selected segment to the part chosen above",
                                    style={**STYLES['btn_reassign'], 'marginTop': '10px'}),
                         html.Div(id='overview-status', style={'marginTop': '10px'}),
                     
@@ -250,8 +338,11 @@ class SegmentCorrectionApp:
                         html.Hr(),
                     
                         html.Button("✓ Done - Accept Changes", id='done-btn', n_clicks=0,
+                                   title="Save the assignment and close (unassigned segments "
+                                         "go to the base part automatically)",
                                    style=STYLES['btn_done']),
                         html.Button("✗ Cancel", id='cancel-btn', n_clicks=0,
+                                   title="Close and discard every change made in this session",
                                    style=STYLES['btn_cancel']),
                     ], style=STYLES['right_panel']),
                 ], style=STYLES['main_layout']),
@@ -289,6 +380,16 @@ class SegmentCorrectionApp:
                 
                     # Right: Split/Merge controls
                     html.Div([
+                        html.Div([
+                            html.B("Goal: "),
+                            "cut apart segments that wrongly span two different parts. "
+                            "1) Select the segment (click it or use the dropdown). "
+                            "2) Cut it with one of the tools below — the cut-off faces become "
+                            "a new, unassigned (gray) segment. "
+                            "3) Give the new segment its part on the Overview tab. "
+                            "(Shortcut: after grabbing faces in Island mode, “Split & Assign "
+                            "to Part” does steps 2 and 3 in one click.)",
+                        ], style=HELP_STYLES['tab_intro']),
                         html.H4("Selected Segment"),
                         dcc.Dropdown(
                             id='segments-dropdown',
@@ -296,47 +397,68 @@ class SegmentCorrectionApp:
                             placeholder="Select segment..."
                         ),
                         html.Div(id='segments-selected-display', style={'marginTop': '10px'}),
-                    
+
                         html.Hr(),
-                    
+
                         # Split by Planarity
                         html.H4("Split by Planarity"),
-                        html.P("Click on a planar surface to split it off.", 
+                        html.P("Cuts off one flat surface. Enter the mode, then click a flat "
+                               "area (e.g. a drawer front): the faces lying on that plane are "
+                               "split into a new segment.",
                                style={'fontSize': '12px', 'color': '#666'}),
                         html.Button("Enter Planar Split Mode", id='planar-split-btn', n_clicks=0,
+                                   title="Then click a flat area of the selected segment to cut it off",
                                    style={**STYLES['btn_reassign'], 'backgroundColor': '#9C27B0', 'width': '100%'}),
                         html.Div(id='planar-split-status', style={'marginTop': '5px'}),
                         html.Div([
                             html.Label("Angle Threshold:", style={'fontSize': '12px'}),
                             dcc.Slider(id='angle-slider', min=5, max=45, step=5, value=15,
                                       marks={5: '5°', 15: '15°', 30: '30°', 45: '45°'}),
+                            html.P("How far a face may tilt away from the clicked face and "
+                                   "still be included (used by both split modes). Grabbing too "
+                                   "much? Lower it. Too little? Raise it.",
+                                   style={'fontSize': '10px', 'color': '#888', 'marginTop': '2px'}),
                         ], style={'marginTop': '10px'}),
                         dcc.Checklist(
                             id='cross-segment-check',
                             options=[{'label': ' Cross-segment', 'value': 'cross'}],
                             value=[], style={'fontSize': '12px', 'marginTop': '5px'}
                         ),
-                    
+                        html.P("Cross-segment: take matching faces from other segments too, "
+                               "not just the selected one. With Split by Planarity it only "
+                               "grows across touching surfaces; with Split by Normal it "
+                               "reaches matching faces anywhere on the object.",
+                               style={'fontSize': '10px', 'color': '#888', 'marginTop': '2px'}),
+
                         html.Hr(),
-                    
+
                         # Split by Normal
                         html.H4("Split by Normal"),
-                        html.P("Split all faces with similar orientation.", 
+                        html.P("Cuts off every face parallel to the one you click — facing "
+                               "the same way or the exact opposite way (e.g. both the top and "
+                               "the underside of a shelf) — even when they are not on the "
+                               "same flat plane.",
                                style={'fontSize': '12px', 'color': '#666'}),
                         html.Button("Enter Normal Split Mode", id='normal-split-btn', n_clicks=0,
+                                   title="Then click a face — all parallel faces split off",
                                    style={**STYLES['btn_reassign'], 'backgroundColor': '#3F51B5', 'width': '100%'}),
                         html.Div(id='normal-split-status', style={'marginTop': '5px'}),
-                    
+
                         html.Hr(),
-                    
+
                         # Split Connected Components
                         html.H4("Split Connected Components"),
+                        html.P("If the selected segment is made of pieces that don't touch "
+                               "each other, this turns each piece into its own segment "
+                               "(no clicking in the 3D view needed).",
+                               style={'fontSize': '12px', 'color': '#666'}),
                         html.Div([
                             html.Label("Min Size:", style={'fontSize': '12px'}),
                             dcc.Input(id='min-component-slider', type='number',
                                       min=1, max=10000, step=1, value=10,
                                       style={'width': '80px'}),
-                            html.Span(" faces minimum", style={'fontSize': '10px', 'color': '#888'}),
+                            html.Span(" faces — smaller pieces stay with the main segment",
+                                      style={'fontSize': '10px', 'color': '#888'}),
                         ]),
                         html.Div([
                             html.Label("Spatial Threshold:", style={'fontSize': '12px'}),
@@ -349,22 +471,28 @@ class SegmentCorrectionApp:
                                    style={'fontSize': '10px', 'color': '#888', 'marginTop': '5px'}),
                         ]),
                         html.Button("Split Components", id='split-components-btn', n_clicks=0,
+                                   title="Break the selected segment into its disconnected pieces",
                                    style={**STYLES['btn_reassign'], 'backgroundColor': '#FF5722', 'width': '100%', 'marginTop': '10px'}),
 
                         html.Hr(),
 
                         # Face selection: island grab / stray islands
                         html.H4("Select & Reassign Faces"),
-                        html.P("Grab whole disconnected islands, then split them off or "
-                               "send them straight to another part. "
-                               "Ideal for stray debris far from the main body.",
+                        html.P("Grab whole disconnected pieces (“islands”) of the selected "
+                               "segment — they turn black — then split them off or send them "
+                               "straight to another part. Ideal for stray debris far from "
+                               "the main body.",
                                style={'fontSize': '12px', 'color': '#666'}),
                         html.Button("Enter Island Mode", id='island-mode-btn', n_clicks=0,
+                                   title="Then click any disconnected piece of the selected "
+                                         "segment to select all of it (click again to deselect)",
                                    style={**STYLES['btn_reassign'], 'backgroundColor': '#00BCD4', 'width': '100%', 'marginTop': '5px'}),
-                        html.P("Island mode: one click selects a whole disconnected piece.",
+                        html.P("Island mode: one click selects a whole disconnected piece; "
+                               "clicking a selected piece deselects it.",
                                style={'fontSize': '10px', 'color': '#888', 'marginTop': '2px'}),
                         html.Div(id='face-mode-status', style={'marginTop': '5px'}),
                         html.Button("Select All Stray Islands", id='stray-islands-btn', n_clicks=0,
+                                   title="One click: select every piece except the segment's largest one",
                                    style={**STYLES['btn_reassign'], 'backgroundColor': '#8BC34A', 'width': '100%', 'marginTop': '5px'}),
                         html.Div([
                             html.Label("Max island size:", style={'fontSize': '12px'}),
@@ -376,8 +504,10 @@ class SegmentCorrectionApp:
                         ], style={'marginTop': '5px'}),
                         html.Div(id='face-select-display', style={'marginTop': '8px'}),
                         html.Button("Clear Face Selection", id='clear-faces-btn', n_clicks=0,
+                                   title="Deselect all selected (black) faces",
                                    style={**STYLES['btn_reassign'], 'backgroundColor': '#9E9E9E', 'width': '100%', 'marginTop': '5px'}),
                         html.Button("Split Selection → New Segment", id='split-selection-btn', n_clicks=0,
+                                   title="Turn the selected (black) faces into a new, unassigned segment",
                                    style={**STYLES['btn_reassign'], 'backgroundColor': '#FF9800', 'width': '100%', 'marginTop': '5px'}),
                         dcc.Dropdown(
                             id='face-part-dropdown',
@@ -385,12 +515,17 @@ class SegmentCorrectionApp:
                             placeholder="Part to receive the faces...",
                         ),
                         html.Button("Split & Assign to Part", id='split-assign-btn', n_clicks=0,
+                                   title="Split the selected (black) faces off and assign them "
+                                         "to the part chosen above, in one step",
                                    style={**STYLES['btn_reassign'], 'width': '100%', 'marginTop': '5px'}),
 
                         html.Hr(),
 
                         # Merge Segments
                         html.H4("Merge Segments"),
+                        html.P("Combine 2+ segments into one. Rarely required: a part may own "
+                               "many segments, so merging is for tidiness only.",
+                               style={'fontSize': '12px', 'color': '#666'}),
                         dcc.Dropdown(
                             id='merge-dropdown',
                             options=[{'label': f"Segment {s}", 'value': s} for s in self.all_segments],
@@ -404,6 +539,8 @@ class SegmentCorrectionApp:
                     
                         # Undo
                         html.Button("↶ Undo", id='undo-btn', n_clicks=0,
+                                   title="Revert the last split / merge / reassignment "
+                                         "(from any tab, up to 20 steps)",
                                    style={**STYLES['btn_reassign'], 'backgroundColor': '#607D8B', 'width': '100%'}),
                         html.Div(id='segments-status', style={'marginTop': '10px'}),
                     ], style=STYLES['right_panel']),
@@ -445,6 +582,12 @@ class SegmentCorrectionApp:
                 
                     # Right: Part controls
                     html.Div([
+                        html.Div([
+                            html.B("Goal: "),
+                            "final check. Pick a part to see only its segments (the rest of "
+                            "the object is hidden) and make sure nothing is missing or extra; "
+                            "move any strays to their correct part.",
+                        ], style=HELP_STYLES['tab_intro']),
                         html.H4("Select Part to View"),
                         dcc.Dropdown(
                             id='parts-dropdown',
@@ -468,8 +611,10 @@ class SegmentCorrectionApp:
                             placeholder="Move selected to part...",
                         ),
                         html.Button("Move Selected Segments", id='parts-move-btn', n_clicks=0,
+                                   title="Move the gold segments to the part chosen above",
                                    style={**STYLES['btn_reassign'], 'marginTop': '10px'}),
                         html.Button("Clear Selection", id='parts-clear-btn', n_clicks=0,
+                                   title="Deselect all gold segments",
                                    style={**STYLES['btn_reassign'], 'backgroundColor': '#9E9E9E'}),
                         html.Div(id='parts-status', style={'marginTop': '10px'}),
 
@@ -489,9 +634,11 @@ class SegmentCorrectionApp:
         # MAIN LAYOUT WITH TABS
         # =====================================================
         self.app.layout = html.Div([
-            html.H2("Segment-to-Part Assignment Editor", 
-                    style={'textAlign': 'center', 'marginBottom': '20px'}),
-            
+            html.H2("Segment-to-Part Assignment Editor",
+                    style={'textAlign': 'center', 'marginBottom': '10px'}),
+
+            self._help_panel(),
+
             dcc.Tabs(id='main-tabs', value='overview', children=[
                 dcc.Tab(label='Overview (Assign)', value='overview'),
                 dcc.Tab(label='Segments (Split/Merge)', value='segments'),
@@ -716,6 +863,7 @@ class SegmentCorrectionApp:
             if n_clicks == 0:
                 raise PreventUpdate
             self.result_holder['result'] = self.original_assignment
+            self.result_holder['cancelled'] = True
             self.result_holder['done'] = True
             raise PreventUpdate
         
@@ -1520,6 +1668,7 @@ class SegmentCorrectionApp:
         print("  - Segments: Split and merge segments; grab stray islands")
         print("              and send them to another part")
         print("  - Parts: View a part and move its segments to other parts")
+        print("\nNew to this tool? Expand the '❓ New here?' guide at the top of the page.")
         print("\nClick 'Done' when finished, or 'Cancel' to discard changes.")
         print(f"{'='*60}\n")
         
@@ -1531,7 +1680,15 @@ class SegmentCorrectionApp:
         server.shutdown()
         
         print("Segment correction complete!")
-        # Return updated assignment, face2label, and label2face_mask
+        # Return updated assignment, face2label, and label2face_mask.
+        # On Cancel, return the pristine arrays so this session's splits and
+        # merges are truly discarded along with the assignment edits.
+        if self.result_holder.get('cancelled'):
+            return {
+                'assignment': self.result_holder['result'],
+                'face2label': self._orig_face2label,
+                'label2face_mask': self._orig_label2face_mask
+            }
         return {
             'assignment': self.result_holder['result'],
             'face2label': self.face2label,

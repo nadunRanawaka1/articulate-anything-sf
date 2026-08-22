@@ -81,6 +81,22 @@ REFINE_STYLES = {
         'fontWeight': 'bold',
         'marginLeft': '12px',
     },
+    'help_details': {
+        'backgroundColor': '#fffde7',
+        'border': '1px solid #ffe082',
+        'borderRadius': '5px',
+        'padding': '8px 14px',
+        'margin': '0 auto 12px auto',
+        'maxWidth': '1150px',
+        'fontSize': '13px',
+        'color': '#444',
+        'textAlign': 'left',
+    },
+    'help_summary': {
+        'cursor': 'pointer',
+        'fontWeight': 'bold',
+        'color': '#795548',
+    },
 }
 
 
@@ -169,9 +185,16 @@ class ArticulationRefinementApp:
         rows = [
             html.Div([
                 html.Span(style={'display': 'inline-block', 'width': '90px'}),
-                html.Span("mass (kg)", style={'display': 'inline-block', 'width': '80px', 'fontSize': '11px'}),
-                html.Span("surface fric.", style={'display': 'inline-block', 'width': '80px', 'fontSize': '11px'}),
-                html.Span("joint damp.", style={'display': 'inline-block', 'width': '80px', 'fontSize': '11px'}),
+                html.Span("mass (kg)", title="Weight of the part in kilograms",
+                          style={'display': 'inline-block', 'width': '80px', 'fontSize': '11px'}),
+                html.Span("surface fric.",
+                          title="How grippy the part's surface is on contact "
+                                "(~0.1 slippery, ~1.0 rubbery)",
+                          style={'display': 'inline-block', 'width': '80px', 'fontSize': '11px'}),
+                html.Span("joint damp.",
+                          title="Damping of the joint that moves this part "
+                                "(higher = heavier, settles faster)",
+                          style={'display': 'inline-block', 'width': '80px', 'fontSize': '11px'}),
             ])
         ]
         for link_name in model.geometry_links():
@@ -201,6 +224,72 @@ class ArticulationRefinementApp:
                           style={'width': '72px'}),
             ], style={'marginTop': '4px'}))
         return rows
+
+    def _help_panel(self):
+        """Collapsible walkthrough for first-time users (pure HTML, no callbacks)."""
+        from dash import html
+
+        li_style = {'marginBottom': '4px'}
+        legend = html.Ul([
+            html.Li([html.Span("red line + cone", style={'color': '#d62728', 'fontWeight': 'bold'}),
+                     " — the joint's motion axis (the line it rotates around, or the "
+                     "direction it slides along)"], style=li_style),
+            html.Li([html.Span("black diamond", style={'fontWeight': 'bold'}),
+                     " — the pivot, the point the axis passes through (e.g. the hinge "
+                     "of a door)"], style=li_style),
+            html.Li([html.Span("orange dotted arc/line", style={'color': '#ff7f0e', 'fontWeight': 'bold'}),
+                     " — the allowed motion range, from the lower to the upper limit"],
+                    style=li_style),
+            html.Li([html.Span("gray transparent copies", style={'color': '#788fb4', 'fontWeight': 'bold'}),
+                     " — “ghosts” of the moving part at each end of its range"], style=li_style),
+            html.Li([html.Span("red/green/blue lines at the origin", style={'fontWeight': 'bold'}),
+                     " — the world X/Y/Z directions"], style=li_style),
+        ], style={'marginTop': '4px', 'marginBottom': '6px'})
+
+        return html.Details([
+            html.Summary("❓  New here? Click for a quick guide",
+                         style=REFINE_STYLES['help_summary']),
+            html.P([
+                html.B("What this tool does: "),
+                "the pipeline guessed how this object's parts move — each moving part is "
+                "connected by a ", html.B("joint"),
+                " with a motion type, an axis, a pivot point, and travel limits. "
+                "Here you check those guesses and fix anything that looks wrong.",
+            ], style={'marginBottom': '6px'}),
+            html.P([
+                html.B("Joint types in plain words: "),
+                html.B("revolute"), " swings like a door · ",
+                html.B("prismatic"), " slides like a drawer · ",
+                html.B("continuous"), " spins endlessly like a wheel · ",
+                html.B("fixed"), " does not move.",
+            ], style={'marginBottom': '6px'}),
+            html.B("In the 3D view (for the selected joint):"),
+            legend,
+            html.B("Typical workflow:"),
+            html.Ol([
+                html.Li("Pick the object (top) and a joint (right panel). Everything except "
+                        "the part that joint moves is faded; hovering a part shows its name.",
+                        style=li_style),
+                html.Li("Drag the “Test joint motion” slider to preview the motion. The "
+                        "slider is preview-only — it never changes the object.", style=li_style),
+                html.Li([
+                    "If the motion looks wrong, fix it top to bottom in the right panel: ",
+                    html.B("Type"), " (wrong kind of motion entirely?) → ",
+                    html.B("Axis"), " (moving backwards? press Flip; tilted? use the World "
+                    "X/Y/Z buttons, or type a direction and press Apply) → ",
+                    html.B("Pivot"), " (rotating around the wrong place? press “Pick point on "
+                    "mesh”, then click the hinge location in the 3D view) → ",
+                    html.B("Limits"), " (opens too far / not far enough? adjust lower/upper "
+                    "and press Apply).",
+                ], style=li_style),
+                html.Li("Dynamics and per-part physics are optional fine-tuning. In the "
+                        "per-part table, blank fields keep the pipeline's automatic "
+                        "estimates.", style=li_style),
+                html.Li("Press “Save & Finish”. Mistakes are safe: Undo / Reset revert edits "
+                        "while working, and every save keeps a backup of the original "
+                        "(mobility_original.urdf).", style=li_style),
+            ], style={'marginTop': '4px', 'marginBottom': '2px'}),
+        ], style=REFINE_STYLES['help_details'])
 
     # ------------------------------------------------------------------
     # App / layout
@@ -242,14 +331,19 @@ class ArticulationRefinementApp:
                       style=STYLES['graph']),
             html.Div([
                 html.B("Test joint motion"),
+                html.Span(" (preview only — drag to move the joint; nothing is saved)",
+                          style={'fontSize': '11px', 'color': '#888'}),
                 html.Span(id='q-readout', style={'marginLeft': '10px', 'fontSize': '13px'}),
                 dcc.Slider(id='q-slider', min=0.0, max=1.0, step=0.001, value=0.0,
                            marks=None, updatemode='drag',
                            tooltip={"placement": "bottom", "always_visible": False}),
                 html.Div([
-                    html.Button("q = 0", id='btn-q-zero', style=REFINE_STYLES['btn_small']),
-                    html.Button("→ lower", id='btn-q-lower', style=REFINE_STYLES['btn_small']),
-                    html.Button("→ upper", id='btn-q-upper', style=REFINE_STYLES['btn_small']),
+                    html.Button("q = 0", id='btn-q-zero', style=REFINE_STYLES['btn_small'],
+                                title="Back to the as-scanned pose"),
+                    html.Button("→ lower", id='btn-q-lower', style=REFINE_STYLES['btn_small'],
+                                title="Move the joint to its lower limit"),
+                    html.Button("→ upper", id='btn-q-upper', style=REFINE_STYLES['btn_small'],
+                                title="Move the joint to its upper limit"),
                     dcc.Checklist(id='chk-ghosts',
                                   options=[{'label': ' Show limit ghosts', 'value': 'ghosts'}],
                                   value=['ghosts'],
@@ -271,6 +365,9 @@ class ArticulationRefinementApp:
         right_panel = html.Div([
             html.Div([
                 html.B("Joint"),
+                html.Div("A joint moves one part (the child) relative to the part it is "
+                         "mounted on (the parent). Pick the joint to inspect or fix.",
+                         style=REFINE_STYLES['hint']),
                 dcc.Dropdown(id='joint-dropdown', options=self._joint_options(first),
                              value=self._default_joint(first), clearable=False),
                 html.Div(id='joint-info', style={**STYLES['selected_display'], 'marginTop': '8px'}),
@@ -278,30 +375,48 @@ class ArticulationRefinementApp:
                 dcc.Dropdown(id='joint-type-dropdown', clearable=False,
                              options=[{'label': t, 'value': t}
                                       for t in list(MOVABLE_TYPES) + ['fixed']]),
+                html.Div("revolute = swings (door) · prismatic = slides (drawer) · "
+                         "continuous = spins freely (wheel) · fixed = rigid",
+                         style=REFINE_STYLES['hint']),
             ], style=REFINE_STYLES['section']),
 
             html.Div([
                 html.B("Axis"),
-                html.Div("Direction in the parent-link frame (normalized on apply).",
+                html.Div("The direction the part rotates around / slides along — the red "
+                         "arrow in the 3D view. Part moving backwards? Just press Flip. "
+                         "(Values are x/y/z in the parent link's frame; the World buttons "
+                         "snap to global directions. Normalized on apply.)",
                          style=REFINE_STYLES['hint']),
                 vec_inputs('axis'),
                 html.Div([
-                    html.Button("Apply", id='btn-axis-apply', style=REFINE_STYLES['btn_apply']),
-                    html.Button("Flip", id='btn-axis-flip', style=REFINE_STYLES['btn_small']),
-                    html.Button("World X", id='btn-axis-world-x', style=REFINE_STYLES['btn_small']),
-                    html.Button("World Y", id='btn-axis-world-y', style=REFINE_STYLES['btn_small']),
-                    html.Button("World Z", id='btn-axis-world-z', style=REFINE_STYLES['btn_small']),
+                    html.Button("Apply", id='btn-axis-apply', style=REFINE_STYLES['btn_apply'],
+                                title="Use the x/y/z direction typed above"),
+                    html.Button("Flip", id='btn-axis-flip', style=REFINE_STYLES['btn_small'],
+                                title="Reverse the motion direction"),
+                    html.Button("World X", id='btn-axis-world-x', style=REFINE_STYLES['btn_small'],
+                                title="Point the axis along the world X direction (red line)"),
+                    html.Button("World Y", id='btn-axis-world-y', style=REFINE_STYLES['btn_small'],
+                                title="Point the axis along the world Y direction (green line)"),
+                    html.Button("World Z", id='btn-axis-world-z', style=REFINE_STYLES['btn_small'],
+                                title="Point the axis along the world Z direction (blue line)"),
                 ]),
                 html.Div(id='axis-world-readout', style=REFINE_STYLES['hint']),
             ], style=REFINE_STYLES['section'], id='axis-section'),
 
             html.Div([
                 html.B("Pivot / origin"),
-                html.Div("Joint origin in the parent-link frame.", style=REFINE_STYLES['hint']),
+                html.Div("The point the axis passes through — the black diamond in the 3D "
+                         "view. For a door this is the hinge line; a wrong pivot makes the "
+                         "part sweep in a wrong arc. Easiest fix: press “Pick point on "
+                         "mesh”, then click the hinge location in the 3D view. "
+                         "(Coordinates are in the parent link's frame.)",
+                         style=REFINE_STYLES['hint']),
                 vec_inputs('origin'),
                 html.Div([
-                    html.Button("Apply", id='btn-origin-apply', style=REFINE_STYLES['btn_apply']),
+                    html.Button("Apply", id='btn-origin-apply', style=REFINE_STYLES['btn_apply'],
+                                title="Use the x/y/z position typed above"),
                     html.Button("Pick point on mesh", id='btn-pick-pivot',
+                                title="Then click the 3D view where the pivot/hinge should be",
                                 style=REFINE_STYLES['btn_small']),
                 ]),
                 dcc.Checklist(
@@ -309,10 +424,15 @@ class ArticulationRefinementApp:
                     options=[{'label': ' Keep part in place (compensate child geometry)',
                               'value': 'comp'}],
                     value=['comp'], style=REFINE_STYLES['hint']),
+                html.Div("Leave checked: only the pivot moves. Unchecked, the part itself "
+                         "is dragged along with the pivot.", style=REFINE_STYLES['hint']),
             ], style=REFINE_STYLES['section'], id='pivot-section'),
 
             html.Div([
                 html.B("Limits"),
+                html.Div("How far the joint may travel from the scanned pose (q = 0) — "
+                         "shown in 3D as the orange range markers and the gray ghosts.",
+                         style=REFINE_STYLES['hint']),
                 html.Div(id='limit-units-hint', style=REFINE_STYLES['hint']),
                 html.Div([
                     num_field("lower limit", 'limit-lower', placeholder='lower'),
@@ -324,17 +444,27 @@ class ArticulationRefinementApp:
                     num_field("max velocity", 'limit-velocity',
                               placeholder='velocity', min=0),
                 ], style={'marginTop': '6px'}),
+                html.Div("Effort and velocity cap the simulator's actuation; "
+                         "leave them as-is if unsure.", style=REFINE_STYLES['hint']),
                 html.Div(id='limit-degrees', style=REFINE_STYLES['hint']),
-                html.Button("Apply", id='btn-limits-apply', style=REFINE_STYLES['btn_apply']),
+                html.Button("Apply", id='btn-limits-apply', style=REFINE_STYLES['btn_apply'],
+                            title="Use the limit values typed above"),
             ], style=REFINE_STYLES['section'], id='limits-section'),
 
             html.Div([
                 html.B("Joint dynamics"),
+                html.Div("How the joint resists motion in simulation: damping slows it while "
+                         "moving (higher = heavier, settles faster), friction must be "
+                         "overcome for it to move at all. The fields show the current "
+                         "values; edit them and press Apply to change them (clearing a "
+                         "field and applying removes that value).",
+                         style=REFINE_STYLES['hint']),
                 html.Div([
                     num_field("damping", 'dyn-damping', placeholder='damping', min=0),
                     num_field("friction", 'dyn-friction', placeholder='friction', min=0),
                 ]),
-                html.Button("Apply", id='btn-dyn-apply', style=REFINE_STYLES['btn_apply']),
+                html.Button("Apply", id='btn-dyn-apply', style=REFINE_STYLES['btn_apply'],
+                            title="Use the damping/friction values typed above"),
                 html.Div("Also saved to physics_overrides.json so the sim-ready "
                          "importer keeps them.", style=REFINE_STYLES['hint']),
             ], style=REFINE_STYLES['section'], id='dynamics-section'),
@@ -349,17 +479,27 @@ class ArticulationRefinementApp:
             ], style=REFINE_STYLES['section']),
 
             html.Div([
-                html.Button("Undo", id='btn-undo', style=REFINE_STYLES['btn_small']),
-                html.Button("Reset joint", id='btn-reset-joint', style=REFINE_STYLES['btn_small']),
-                html.Button("Reset all", id='btn-reset-all', style=REFINE_STYLES['btn_small']),
+                html.Button("Undo", id='btn-undo', style=REFINE_STYLES['btn_small'],
+                            title="Revert the last edit (up to 50 steps per object)"),
+                html.Button("Reset joint", id='btn-reset-joint', style=REFINE_STYLES['btn_small'],
+                            title="Put the selected joint back to the last saved state "
+                                  "(or to how it was when the tool opened, if you haven't saved yet)"),
+                html.Button("Reset all", id='btn-reset-all', style=REFINE_STYLES['btn_small'],
+                            title="Put every joint of this object back to the last saved state "
+                                  "(or to how it was when the tool opened, if you haven't saved yet)"),
             ]),
-            html.Button("Save", id='btn-save', style={**STYLES['btn_reassign'], 'marginTop': '10px'}),
-            html.Button("Save & Finish", id='btn-done', style=STYLES['btn_done']),
-            html.Button("Cancel (discard unsaved)", id='btn-cancel', style=STYLES['btn_cancel']),
+            html.Button("Save", id='btn-save', style={**STYLES['btn_reassign'], 'marginTop': '10px'},
+                        title="Write this object's changes to disk now and keep editing "
+                              "(the original file is backed up)"),
+            html.Button("Save & Finish", id='btn-done', style=STYLES['btn_done'],
+                        title="Save all objects with unsaved edits and close the tool"),
+            html.Button("Cancel (discard unsaved)", id='btn-cancel', style=STYLES['btn_cancel'],
+                        title="Close the tool; anything not saved yet is discarded"),
         ], style=STYLES['right_panel'])
 
         self.app.layout = html.Div([
             html.H2("Articulation Refinement", style=STYLES['header']),
+            self._help_panel(),
             html.Div([
                 html.Label("Object: ", style={'marginRight': '8px', 'fontWeight': 'bold'}),
                 dcc.Dropdown(id='object-dropdown',
@@ -971,6 +1111,7 @@ class ArticulationRefinementApp:
         print("slider to preview motion. 'Save' writes results/mobility.urdf")
         print("(originals kept as mobility_original.urdf + versioned copies)")
         print("and physics_overrides.json.")
+        print("\nNew to this tool? Expand the '❓ New here?' guide at the top of the page.")
         print("\nClick 'Save & Finish' when done, or 'Cancel' to discard unsaved edits.")
         print(f"{'=' * 60}\n")
 
