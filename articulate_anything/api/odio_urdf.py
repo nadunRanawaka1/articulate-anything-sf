@@ -473,6 +473,23 @@ def sample_mesh_surface(mesh: "trimesh.Trimesh", spacing: float,
     return np.vstack([verts, np.asarray(samples, dtype=float)])
 
 
+def sample_mesh_surface_with_normals(mesh: "trimesh.Trimesh", spacing: float,
+                                     cap: int = PIVOT_SAMPLE_CAP):
+    """Like `sample_mesh_surface`, but also returns the outward normal per point."""
+    verts = np.asarray(mesh.vertices, dtype=float)
+    vert_normals = np.asarray(mesh.vertex_normals, dtype=float)
+    n_samples = int(np.clip(float(mesh.area) / max(spacing ** 2, 1e-12), 2000, cap))
+    try:
+        samples, fidx = trimesh.sample.sample_surface(mesh, n_samples, seed=0)
+    except TypeError:  # older trimesh without `seed`
+        samples, fidx = trimesh.sample.sample_surface(mesh, n_samples)
+    points = np.vstack([verts, np.asarray(samples, dtype=float)])
+    normals = np.vstack([vert_normals, np.asarray(mesh.face_normals, dtype=float)[fidx]])
+    norms = np.linalg.norm(normals, axis=1, keepdims=True)
+    normals = normals / np.clip(norms, 1e-12, None)
+    return points, normals
+
+
 def compute_hinge_pivot_from_points(
     child_points: np.ndarray,
     parent_points: np.ndarray,
@@ -575,6 +592,121 @@ def compute_hinge_pivot_from_points(
         along_axis = float((contact[edge_mask] @ axis_hat).mean())
 
     return chosen[0] * e1 + chosen[1] * e2 + along_axis * axis_hat
+
+
+def compute_prismatic_seat_offset(
+    child_points: np.ndarray,
+    child_normals: np.ndarray,
+    parent_points: np.ndarray,
+    parent_normals: np.ndarray,
+    axis: Union[List[float], np.ndarray],
+    max_travel: float,
+    normal_cos_threshold: float = 0.5,
+    gap_percentile: float = 2.0,
+    min_pairs: int = 20,
+    margin: Optional[float] = None,
+):
+    """
+    How far a prismatic child can slide toward closed (along -axis) before its
+    motion-facing surfaces contact the parent's opposing surfaces.
+
+    A depth-buffer sweep along the axis: only child samples whose normals face the
+    closing direction and parent samples whose normals oppose it can collide, so
+    walls and rails parallel to the travel never register as contacts. Used to
+    re-anchor q=0 at the closed pose when the object was scanned open.
+
+    Returns:
+        tuple[float, dict]: (offset >= 0, info). 0 = already seated or not measurable.
+    """
+    axis = np.asarray(axis, dtype=float)
+    axis = axis / np.linalg.norm(axis)
+    info = {"seat_offset": 0.0, "status": "unknown", "n_pairs": 0, "raw_gap": None}
+
+    all_ca = np.asarray(child_points, dtype=float) @ axis
+    all_pa = np.asarray(parent_points, dtype=float) @ axis
+    info["child_axial_span"] = [float(all_ca.min()), float(all_ca.max())]
+    info["parent_axial_span"] = [float(all_pa.min()), float(all_pa.max())]
+
+    child_normals = np.asarray(child_normals, dtype=float)
+    parent_normals = np.asarray(parent_normals, dtype=float)
+    c_face = (child_normals @ axis) < -normal_cos_threshold
+    p_face = (parent_normals @ axis) > normal_cos_threshold
+    if int(c_face.sum()) < min_pairs or int(p_face.sum()) < min_pairs:
+        info["status"] = "no_blocking_geometry"
+        return 0.0, info
+
+    helper = np.array([1.0, 0.0, 0.0]) if abs(axis[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    e1 = np.cross(axis, helper)
+    e1 = e1 / np.linalg.norm(e1)
+    e2 = np.cross(axis, e1)
+
+    cp = np.asarray(child_points, dtype=float)[c_face]
+    pp = np.asarray(parent_points, dtype=float)[p_face]
+    ca, pa = cp @ axis, pp @ axis
+    ct = np.stack([cp @ e1, cp @ e2], axis=1)
+    pt = np.stack([pp @ e1, pp @ e2], axis=1)
+
+    extent = float(max(np.ptp(ct[:, 0]), np.ptp(ct[:, 1]), 1e-6))
+    cell = max(extent / 64.0, 1e-4)
+
+    buckets = {}
+    for key, a in zip(map(tuple, np.floor(pt / cell).astype(np.int64)), pa):
+        buckets.setdefault(key, []).append(a)
+    buckets = {k: np.sort(np.asarray(v)) for k, v in buckets.items()}
+
+    gaps = []
+    for (kx, ky), a in zip(map(tuple, np.floor(ct / cell).astype(np.int64)), ca):
+        best = None
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                arr = buckets.get((kx + dx, ky + dy))
+                if arr is None:
+                    continue
+                i = int(np.searchsorted(arr, a, side="right")) - 1
+                if i >= 0 and (best is None or arr[i] > best):
+                    best = arr[i]
+        if best is not None:
+            gaps.append(a - best)
+
+    info["n_pairs"] = len(gaps)
+    if len(gaps) < min_pairs:
+        info["status"] = "no_blocking_geometry"
+        return 0.0, info
+
+    gaps = np.maximum(np.asarray(gaps), 0.0)
+    raw = float(np.percentile(gaps, gap_percentile))
+    info["raw_gap"] = raw
+    if margin is None:
+        margin = cell
+    if raw > 1.25 * max_travel + margin:
+        info["status"] = "exceeds_travel"
+        return 0.0, info
+    offset = max(raw - margin, 0.0)
+    info["seat_offset"] = offset
+    info["status"] = "seated" if offset > 0 else "already_seated"
+    return offset, info
+
+
+def engagement_capped_travel(child_axial_span, parent_axial_span, seat_offset, travel,
+                             min_engagement_frac=0.10):
+    """
+    Caps prismatic travel so that at q=upper at least `min_engagement_frac` of the
+    child's axial length remains behind the parent's front plane — the link can slide
+    out but never fully leave its parent. Spans are measured at the scanned pose;
+    q=0 sits `seat_offset` toward closed from it. The scanned pose (q=seat_offset)
+    always stays reachable. Returns the (possibly reduced) travel.
+    """
+    c0, c1 = float(child_axial_span[0]), float(child_axial_span[1])
+    p1 = float(parent_axial_span[1])
+    child_len = c1 - c0
+    if child_len <= 0 or travel <= 0:
+        return travel
+    engagement_closed = p1 - (c0 - seat_offset)
+    min_keep = min_engagement_frac * child_len
+    if engagement_closed <= min_keep:
+        return travel  # barely engaged even at closed; the cap is not meaningful here
+    cap = engagement_closed - min_keep
+    return float(min(travel, max(cap, seat_offset + 1e-3)))
 
 
 def world_to_local(
@@ -848,13 +980,15 @@ class Robot(NamedElement):
         )
 
     def _get_link_surface_points(
-        self, link_name: str, robot_id: int, spacing: float
-    ) -> Optional[np.ndarray]:
+        self, link_name: str, robot_id: int, spacing: float,
+        return_normals: bool = False,
+    ):
         """
         Returns a dense point cloud of a link's visual meshes, expressed in the
         same world/simulator frame that `get_bounding_boxes` reports AABBs in.
+        With `return_normals`, returns (points, normals) instead.
 
-        Returns None when the link has no loadable mesh geometry.
+        Returns None (or (None, None)) when the link has no loadable mesh geometry.
         """
         links = self.get_links()
         if link_name not in links:
@@ -875,6 +1009,7 @@ class Robot(NamedElement):
         link_pos = np.asarray(link_pos, dtype=float)
 
         clouds = []
+        normal_clouds = []
         for visual in link.get_named_elements("Visual"):
             geometries = visual.get_named_elements("Geometry")
             if not geometries:
@@ -897,12 +1032,21 @@ class Robot(NamedElement):
             if not hasattr(mesh, "vertices") or len(mesh.vertices) == 0:
                 continue
 
-            points = sample_mesh_surface(mesh, spacing)
+            if return_normals:
+                points, normals = sample_mesh_surface_with_normals(mesh, spacing)
+            else:
+                points = sample_mesh_surface(mesh, spacing)
+                normals = None
 
             if "scale" in meshes[0].attributes:
                 mesh_scale = np.array(
                     [float(s) for s in str(meshes[0].scale).split()], dtype=float)
                 points = points * mesh_scale
+                if normals is not None:
+                    # Normals transform by the inverse scale; renormalize after.
+                    normals = normals / np.clip(mesh_scale, 1e-12, None)
+                    normals = normals / np.clip(
+                        np.linalg.norm(normals, axis=1, keepdims=True), 1e-12, None)
 
             origins = visual.get_named_elements("Origin")
             if origins:
@@ -916,12 +1060,52 @@ class Robot(NamedElement):
                 origin_xyz = np.zeros(3)
                 origin_rpy = np.zeros(3)
 
-            points = R.from_euler("xyz", origin_rpy).apply(points) + origin_xyz
+            origin_rot = R.from_euler("xyz", origin_rpy)
+            points = origin_rot.apply(points) + origin_xyz
             clouds.append(link_rotation.apply(points) + link_pos)
+            if normals is not None:
+                normal_clouds.append(link_rotation.apply(origin_rot.apply(normals)))
 
         if not clouds:
-            return None
+            return (None, None) if return_normals else None
+        if return_normals:
+            return np.vstack(clouds), np.vstack(normal_clouds)
         return np.vstack(clouds)
+
+    @pybullet_session
+    def get_prismatic_seat_offset(
+        self,
+        child_link_name: str,
+        parent_link_name: str,
+        global_axis: List[float],
+        max_travel: float,
+        client=None,
+        robot_id=None,
+    ):
+        """
+        Closing offset (>= 0) from the child's current q=0 pose to its
+        geometrically seated (closed) pose along `-global_axis`. Same frame
+        conventions as `get_hinge_pivot`. Returns (offset, info dict).
+        """
+        if parent_link_name == "base" and "base_helper" in self.get_links():
+            parent_link_name = "base_helper"
+
+        child_aabb = get_aabb(robot_id, [child_link_name])[child_link_name]
+        scale = float(np.linalg.norm(
+            np.asarray(child_aabb[1], dtype=float) - np.asarray(child_aabb[0], dtype=float)))
+        spacing = max(PIVOT_SAMPLE_SPACING_FRACTION * scale, 1e-5)
+
+        child_points, child_normals = self._get_link_surface_points(
+            child_link_name, robot_id, spacing, return_normals=True)
+        parent_points, parent_normals = self._get_link_surface_points(
+            parent_link_name, robot_id, spacing, return_normals=True)
+        if child_points is None or parent_points is None:
+            return 0.0, {"seat_offset": 0.0, "status": "missing_geometry", "n_pairs": 0}
+
+        return compute_prismatic_seat_offset(
+            child_points, child_normals, parent_points, parent_normals,
+            global_axis, max_travel,
+        )
 
     @pybullet_session
     def get_hinge_pivot(
@@ -1555,6 +1739,8 @@ class Robot(NamedElement):
         global_lower_point: List[float],
         global_upper_point: List[float],
         force_overwrite: bool = True,
+        seat_closed: bool = True,
+        min_engagement_frac: float = 0.10,
     ) -> None:
         """
         Creates or updates a prismatic joint between the specified child and parent links.
@@ -1575,9 +1761,43 @@ class Robot(NamedElement):
         if joint is not None and not force_overwrite:
             return  # Joint already exists
 
+        global_lower_point = np.asarray(global_lower_point, dtype=float)
+        global_upper_point = np.asarray(global_upper_point, dtype=float)
+
+        # q=0 is the as-scanned pose, and the limits below are [0, travel] — so an
+        # object scanned open could never close. Re-anchor q=0 at the geometrically
+        # seated pose (no-op when the scan is already closed).
+        if seat_closed:
+            travel_vec = global_upper_point - global_lower_point
+            travel = float(np.linalg.norm(travel_vec))
+            if travel > 1e-4:
+                axis_hat = travel_vec / travel
+                seat, seat_info = self.get_prismatic_seat_offset(
+                    child_link_name, parent_link_name, axis_hat, max_travel=travel)
+                logging.info(
+                    f"[seat_closed] {child_link_name}: {seat_info['status']} "
+                    f"offset={seat:.4f} (n_pairs={seat_info.get('n_pairs', 0)})")
+                if seat > 0:
+                    global_lower_point = -seat * axis_hat
+                    global_upper_point = global_lower_point + max(travel, seat + 1e-3) * axis_hat
+
+                # Engagement cap: the link may slide out but never fully leave its parent.
+                c_span = seat_info.get("child_axial_span")
+                p_span = seat_info.get("parent_axial_span")
+                if c_span and p_span and min_engagement_frac is not None:
+                    travel_now = float(np.linalg.norm(global_upper_point - global_lower_point))
+                    capped = engagement_capped_travel(
+                        c_span, p_span, seat, travel_now,
+                        min_engagement_frac=min_engagement_frac)
+                    if capped < travel_now:
+                        global_upper_point = global_lower_point + capped * axis_hat
+                        logging.info(
+                            f"[engagement_cap] {child_link_name}: travel "
+                            f"{travel_now:.4f} -> {capped:.4f}")
+
         # Transform points from simulator frame to mesh frame if needed
-        global_lower_point = self._transform_from_simulator_frame(np.array(global_lower_point))
-        global_upper_point = self._transform_from_simulator_frame(np.array(global_upper_point))
+        global_lower_point = self._transform_from_simulator_frame(global_lower_point)
+        global_upper_point = self._transform_from_simulator_frame(global_upper_point)
 
         parent_state = self.get_link_states([parent_link_name])[
             parent_link_name]

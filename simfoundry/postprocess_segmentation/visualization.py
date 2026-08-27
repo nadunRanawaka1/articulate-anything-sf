@@ -103,6 +103,13 @@ class SegmentFigureBuilder:
                         j=segment.faces[:, 1],
                         k=segment.faces[:, 2],
                         intensity=intensities,
+                        # One intensity per FACE: without intensitymode='cell'
+                        # plotly interprets the array per-vertex and colors the
+                        # wrong geometry. cmin/cmax pinned so an all-selected
+                        # segment still maps 0 -> black.
+                        intensitymode='cell',
+                        cmin=0,
+                        cmax=1,
                         colorscale=[[0, 'rgb(20,20,20)'], [1, base_color]],  # Black to base color
                         showscale=False,
                         opacity=opacity,
@@ -168,60 +175,79 @@ class SegmentFigureBuilder:
         )
         return fig
     
+    def part_view_segments(self, part_name: str = None, current_assignment: dict = None) -> list:
+        """Segment IDs shown by build_part_view, in trace order.
+
+        Click handlers map clickData's curveNumber back to a segment through
+        this list, so it must iterate exactly like build_part_view does.
+        """
+        current_assignment = current_assignment or {}
+        if part_name and part_name in current_assignment:
+            segments_to_show = set(current_assignment[part_name])
+        else:
+            segments_to_show = set(self.segment_data.keys())
+        return [seg_id for seg_id in self.segment_data if seg_id in segments_to_show]
+
     def build_part_view(
         self,
         part_name: str = None,
         current_assignment: dict = None,
         explosion_factor: float = 0.0,
-        selected_segment: int = None
+        selected_segment: int = None,
+        selected_segments: list = None
     ) -> go.Figure:
         """
         Build a Plotly figure showing only segments belonging to a specific part.
-        
+
         Args:
             part_name: Name of the part to display (None shows all parts)
             current_assignment: Dict mapping part_name -> list of segment IDs
             explosion_factor: How much to explode segments apart (0 = no explosion)
             selected_segment: Segment ID to highlight (or None for no highlight)
-            
+            selected_segments: Multiple segment IDs to highlight (editing selection)
+
         Returns:
             Plotly Figure object
         """
         from .styles import EXPLOSION_SCALE
-        
+
         traces = []
-        
+
         if current_assignment is None:
             current_assignment = {}
-        
+
+        highlight = set(selected_segments or [])
+        if selected_segment is not None:
+            highlight.add(selected_segment)
+
         # Get segments for this part
         if part_name and part_name in current_assignment:
             segments_to_show = set(current_assignment[part_name])
         else:
             # Show all segments
             segments_to_show = set(self.segment_data.keys())
-        
+
         part_color = self.part_colors.get(part_name, self.part_colors.get('_unassigned', 'rgb(150,150,150)'))
-        
+
         for seg_id, segment in self.segment_data.items():
             if seg_id not in segments_to_show:
                 continue
-            
+
             # Apply explosion if factor > 0
             if explosion_factor > 0:
                 offset = segment.direction * explosion_factor * self.scene_scale * EXPLOSION_SCALE
                 seg_vertices = segment.vertices_base + offset
             else:
                 seg_vertices = segment.vertices_base
-            
+
             # Determine color and opacity based on selection
-            is_selected = (selected_segment == seg_id)
+            is_selected = seg_id in highlight
             if is_selected:
                 color = 'rgb(255, 215, 0)'  # Gold for selected
                 opacity = 1.0
             else:
                 color = part_color
-                opacity = 0.7 if selected_segment is not None else 1.0
+                opacity = 0.7 if highlight else 1.0
             
             traces.append(go.Mesh3d(
                 x=seg_vertices[:, 0],

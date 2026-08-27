@@ -121,7 +121,7 @@ def find_coplanar_faces(
     # Many meshes (especially from GLB/GLTF) have per-face vertices which breaks edge sharing
     mesh_copy = mesh.copy()
     original_vertex_count = len(mesh_copy.vertices)
-    mesh_copy.merge_vertices()
+    mesh_copy.merge_vertices(merge_tex=True, merge_norm=True)  # position-only: keep adjacency across texture/normal seams
     merged_vertex_count = len(mesh_copy.vertices)
     
     # Face count should remain the same after merge
@@ -253,22 +253,28 @@ def split_segment_by_faces(
     """
     if len(faces_to_split) == 0:
         return face2label, label2face_mask, -1
-    
-    # Create new segment ID (max existing + 1)
-    new_segment_id = int(np.max(face2label) + 1)
-    
+
+    # New segment ID: must equal its row index in label2face_mask. Taking the
+    # max of (max label + 1) and the current row count guarantees that even
+    # after a merge vacated a high segment id (merge keeps the dead row, so
+    # max(face2label)+1 alone could reuse an id BELOW the appended row index,
+    # writing the faces into an orphaned trailing row and leaving
+    # label2face_mask[new_id] empty).
+    new_segment_id = int(max(np.max(face2label) + 1, label2face_mask.shape[0]))
+
     # Update face2label
     face2label[faces_to_split] = new_segment_id
-    
+
     # Update label2face_mask
     # Remove faces from old segment
     label2face_mask[segment_id, faces_to_split] = 0
-    
-    # Add row for new segment
-    new_row = np.zeros((1, label2face_mask.shape[1]), dtype=label2face_mask.dtype)
-    new_row[0, faces_to_split] = 1
-    label2face_mask = np.vstack([label2face_mask, new_row])
-    
+
+    # Grow the mask so row new_segment_id exists, then set it
+    n_new_rows = new_segment_id + 1 - label2face_mask.shape[0]
+    pad = np.zeros((n_new_rows, label2face_mask.shape[1]), dtype=label2face_mask.dtype)
+    label2face_mask = np.vstack([label2face_mask, pad])
+    label2face_mask[new_segment_id, faces_to_split] = 1
+
     return face2label, label2face_mask, new_segment_id
 
 
@@ -346,7 +352,7 @@ def find_top_plane_faces(
     # Merge duplicate vertices to get proper face adjacency
     # Many meshes (especially from GLB/GLTF) have per-face vertices
     mesh_copy = mesh.copy()
-    mesh_copy.merge_vertices()
+    mesh_copy.merge_vertices(merge_tex=True, merge_norm=True)  # position-only: keep adjacency across texture/normal seams
     
     vertices = np.array(mesh_copy.vertices)
     faces = np.array(mesh_copy.faces)
@@ -712,7 +718,7 @@ def split_by_connected_components(
     """
     # Merge vertices for proper adjacency
     mesh_copy = mesh.copy()
-    mesh_copy.merge_vertices()
+    mesh_copy.merge_vertices(merge_tex=True, merge_norm=True)  # position-only: keep adjacency across texture/normal seams
     
     vertices = np.array(mesh_copy.vertices)
     faces = np.array(mesh_copy.faces)
@@ -830,6 +836,121 @@ def split_by_connected_components(
         print(f"  Skipped {skipped_small} components with < {min_component_size} faces")
     
     return face2label, label2face_mask, new_segment_ids
+
+
+def _build_face_neighbors_for_faces(mesh: trimesh.Trimesh, face_indices: np.ndarray) -> dict:
+    """Edge-sharing adjacency restricted to the given faces.
+
+    Vertices are merged first (GLB/GLTF meshes often have per-face vertices,
+    which would otherwise report every face as an island).
+    """
+    from collections import defaultdict
+
+    mesh_copy = mesh.copy()
+    mesh_copy.merge_vertices(merge_tex=True, merge_norm=True)  # position-only: keep adjacency across texture/normal seams
+    faces = np.array(mesh_copy.faces)
+
+    edge_to_faces = defaultdict(list)
+    for face_idx in face_indices:
+        face = faces[face_idx]
+        for edge in (
+            tuple(sorted((face[0], face[1]))),
+            tuple(sorted((face[1], face[2]))),
+            tuple(sorted((face[2], face[0]))),
+        ):
+            edge_to_faces[edge].append(face_idx)
+
+    face_neighbors = defaultdict(set)
+    for face_list in edge_to_faces.values():
+        for i, f1 in enumerate(face_list):
+            for f2 in face_list[i + 1:]:
+                face_neighbors[f1].add(f2)
+                face_neighbors[f2].add(f1)
+    return face_neighbors
+
+
+def segment_islands(
+    mesh: trimesh.Trimesh,
+    face2label: np.ndarray,
+    segment_id: int,
+) -> list[np.ndarray]:
+    """Topology-only connected components ("islands") of one segment.
+
+    Purely edge-adjacency based — no spatial linking — so it stays fast even
+    on large segments, unlike split_by_connected_components with a spatial
+    threshold. Returned largest-first.
+    """
+    from collections import deque
+
+    segment_face_indices = np.where(face2label == segment_id)[0]
+    if len(segment_face_indices) == 0:
+        return []
+
+    face_neighbors = _build_face_neighbors_for_faces(mesh, segment_face_indices)
+    face_set = set(int(f) for f in segment_face_indices)
+    visited = set()
+    islands = []
+    for start_face in segment_face_indices:
+        start_face = int(start_face)
+        if start_face in visited:
+            continue
+        island = []
+        queue = deque([start_face])
+        while queue:
+            face_idx = queue.popleft()
+            if face_idx in visited:
+                continue
+            visited.add(face_idx)
+            island.append(face_idx)
+            for neighbor in face_neighbors[face_idx]:
+                if neighbor in face_set and neighbor not in visited:
+                    queue.append(neighbor)
+        islands.append(np.array(sorted(island), dtype=int))
+
+    islands.sort(key=len, reverse=True)
+    return islands
+
+
+def island_containing_face(
+    mesh: trimesh.Trimesh,
+    face2label: np.ndarray,
+    segment_id: int,
+    seed_face: int,
+) -> np.ndarray:
+    """The connected island of `segment_id` that contains `seed_face`.
+
+    One-click flood fill for grabbing a stray piece of a segment (e.g. debris
+    floating away from the main body).
+    """
+    for island in segment_islands(mesh, face2label, segment_id):
+        if int(seed_face) in island:
+            return island
+    return np.array([], dtype=int)
+
+
+def stray_islands(
+    mesh: trimesh.Trimesh,
+    face2label: np.ndarray,
+    segment_id: int,
+    max_faces: int | None = None,
+) -> np.ndarray:
+    """All faces of a segment outside its largest island.
+
+    The one-shot "grab all the debris" selection: everything not part of the
+    segment's main body. With max_faces set, only islands at or below that
+    size are included (larger secondary islands are treated as real geometry).
+    """
+    islands = segment_islands(mesh, face2label, segment_id)
+    if len(islands) <= 1:
+        return np.array([], dtype=int)
+    selected = []
+    for island in islands[1:]:
+        if max_faces is not None and len(island) > max_faces:
+            continue
+        selected.append(island)
+    if not selected:
+        return np.array([], dtype=int)
+    return np.concatenate(selected)
 
 
 def find_faces_by_normal(

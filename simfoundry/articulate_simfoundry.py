@@ -927,7 +927,10 @@ def articulate_simfoundry(
     object_results_dir = join_path(cfg.out_dir, cfg.object_name, "../../results")
     os.makedirs(object_results_dir, exist_ok=True)
     shutil.copy(join_path(cfg.out_dir, cfg.object_name, "mobility_final.urdf"), join_path(object_results_dir, "mobility.urdf"))
-    shutil.copytree(join_path(cfg.out_dir, cfg.object_name, "meshes"), join_path(object_results_dir, "meshes"))
+    # dirs_exist_ok: reruns republish over an existing results/meshes (the
+    # rigid-scaffold publish path already does the same).
+    shutil.copytree(join_path(cfg.out_dir, cfg.object_name, "meshes"),
+                    join_path(object_results_dir, "meshes"), dirs_exist_ok=True)
 
     # edit mobility.urdf to use relative paths for the meshes
     edit_urdf_to_use_relative_paths(join_path(object_results_dir, "mobility.urdf"))
